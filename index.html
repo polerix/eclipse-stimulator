@@ -19,24 +19,258 @@
       height: 100%;
       display: block;
     }
-    .lil-gui {
-      --background-color: #111;
-      --text-color: #ddd;
-      --title-background-color: #222;
-      --widget-color: #333;
-      --hover-color: #444;
-      --focus-color: #555;
-      --number-color: #fff;
-      --string-color: #aaa;
+    /* --- LCARS HUD --- */
+    .lcars-hud {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      width: 320px;
+      max-height: calc(100vh - 40px);
+      display: flex;
+      flex-direction: column;
+      background: rgba(8, 8, 10, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      backdrop-filter: blur(6px);
+      color: #e8e8e8;
       font-family: monospace;
+      z-index: 20;
+      overflow: hidden;
+    }
+
+    .lcars-hud__title {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 12px 16px 10px;
+      font-size: 13px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #ff9c00;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .lcars-hud__subtitle {
+      font-size: 10px;
+      letter-spacing: 1px;
+      opacity: 0.5;
+    }
+
+    .lcars-menu {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 10px 10px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .lcars-tab {
+      flex: 1 1 auto;
+      min-width: 72px;
+      text-align: center;
+      padding: 6px 8px;
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #999;
+      background: rgba(255, 255, 255, 0.06);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .lcars-tab:hover { background: rgba(255, 255, 255, 0.12); color: #ddd; }
+
+    .lcars-tab.is-active {
+      background: var(--tab-accent, #ff9c00);
+      color: #000;
+      font-weight: bold;
+    }
+
+    .lcars-tabpanels {
+      padding: 12px;
+      overflow-y: auto;
+    }
+
+    .lcars-tabpanel {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lcars-tabpanel.is-active { display: flex; }
+
+    .lcars-panel {
+      background: #131313;
+      border-left: 5px solid var(--accent, #ff9c00);
+      border-radius: 4px 12px 12px 4px;
+      padding: 8px 12px 10px;
+    }
+
+    .lcars-panel--sub { margin-left: 14px; }
+
+    .lcars-panel__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      text-transform: uppercase;
       font-size: 11px;
+      letter-spacing: 1px;
+      color: var(--accent, #ff9c00);
+      font-weight: bold;
+    }
+
+    .lcars-panel__code {
+      font-size: 9px;
+      font-weight: normal;
+      letter-spacing: 0.5px;
+      opacity: 0.55;
+    }
+
+    .tool-value {
+      margin: 4px 0 6px;
+      font-size: 20px;
+      line-height: 1;
+      color: #fff;
+    }
+
+    .tool-value--text {
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .tool-value__unit {
+      margin-left: 4px;
+      font-size: 11px;
+      opacity: 0.55;
+    }
+
+    .tool-slider {
+      width: 100%;
+      height: 4px;
+      appearance: none;
+      -webkit-appearance: none;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.15);
+      outline: none;
+      cursor: pointer;
+    }
+
+    .tool-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--accent, #ff9c00);
+      border: 2px solid #000;
+      cursor: pointer;
+    }
+
+    .tool-slider::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--accent, #ff9c00);
+      border: 2px solid #000;
+      cursor: pointer;
+    }
+
+    .tool-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .tool-toggle {
+      position: relative;
+      width: 40px;
+      height: 20px;
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      cursor: pointer;
+      outline: none;
+      transition: background 0.15s;
+    }
+
+    .tool-toggle:checked { background: var(--accent, #ff9c00); }
+
+    .tool-toggle::before {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #000;
+      transition: transform 0.15s;
+    }
+
+    .tool-toggle:checked::before { transform: translateX(20px); }
+
+    .tool-select {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .tool-select__opt {
+      flex: 1 1 auto;
+      padding: 5px 8px;
+      font-family: inherit;
+      font-size: 10px;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #aaa;
+      background: rgba(255, 255, 255, 0.06);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .tool-select__opt.is-active {
+      background: var(--accent, #ff9c00);
+      color: #000;
+      font-weight: bold;
+    }
+
+    .tool-color-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .tool-color-swatch {
+      width: 34px;
+      height: 26px;
+      padding: 0;
+      background: none;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      cursor: pointer;
     }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19"></script>
 </head>
 <body>
   <div id="canvas-container"></div>
+
+  <div class="lcars-hud" id="lcars-hud">
+    <div class="lcars-hud__title">
+      Construct Controls
+      <span class="lcars-hud__subtitle">HUD-01</span>
+    </div>
+    <nav class="lcars-menu" id="lcars-menu"></nav>
+    <div class="lcars-tabpanels" id="lcars-tabpanels"></div>
+  </div>
 
   <script>
     // --- Application State & Parameters ---
@@ -256,107 +490,337 @@
       floor.position.y = -params.cube.sizeY / 2;
     }
 
-    // --- GUI Setup ---
-    const gui = new lil.GUI({ title: 'Construct Controls' });
+    // --- LCARS HUD: element builders ---
+    function el(tag, cls, text) {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text != null) node.textContent = text;
+      return node;
+    }
 
-    // 1. Surface Colors Folder
-    const fColors = gui.addFolder('Surface Color Controls');
-    fColors.add(params.surfaceColors, 'preset', [
-      'Default (Black/Grey/White)',
-      'High Contrast Inverted',
-      'Monochrome Dark'
-    ]).name('Palette Preset').onChange((v) => {
-      if (v === 'Default (Black/Grey/White)') {
-        params.surfaceColors.inwardFace = '#ffffff';
-        params.surfaceColors.outwardFace = '#000000';
-        params.surfaceColors.parallelFaces = '#808080';
-      } else if (v === 'High Contrast Inverted') {
-        params.surfaceColors.inwardFace = '#000000';
-        params.surfaceColors.outwardFace = '#ffffff';
-        params.surfaceColors.parallelFaces = '#444444';
-      } else if (v === 'Monochrome Dark') {
-        params.surfaceColors.inwardFace = '#888888';
-        params.surfaceColors.outwardFace = '#111111';
-        params.surfaceColors.parallelFaces = '#333333';
-      }
-      gui.controllersRecursive().forEach(c => c.updateDisplay());
-      updateMaterials();
+    function panelHeader(code, title) {
+      const header = el('div', 'lcars-panel__header');
+      header.appendChild(document.createTextNode(title));
+      header.appendChild(el('span', 'lcars-panel__code', code));
+      return header;
+    }
+
+    function createSliderPanel(container, opts) {
+      const format = opts.format || (v => v);
+      const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
+      panel.appendChild(panelHeader(opts.code, opts.title));
+
+      const valueEl = el('div', 'tool-value', format(opts.value));
+      if (opts.unit) valueEl.appendChild(el('span', 'tool-value__unit', opts.unit));
+      panel.appendChild(valueEl);
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.className = 'tool-slider';
+      slider.min = opts.min;
+      slider.max = opts.max;
+      slider.step = opts.step;
+      slider.value = opts.value;
+      slider.addEventListener('input', () => {
+        const v = parseFloat(slider.value);
+        valueEl.childNodes[0].textContent = format(v);
+        opts.onInput(v);
+      });
+      panel.appendChild(slider);
+
+      container.appendChild(panel);
+      return {
+        refresh(v) {
+          slider.value = v;
+          valueEl.childNodes[0].textContent = format(v);
+        }
+      };
+    }
+
+    function createTogglePanel(container, opts) {
+      const onLabel = opts.onLabel || 'ENABLED';
+      const offLabel = opts.offLabel || 'DISABLED';
+      const panel = el('div', 'lcars-panel');
+      panel.appendChild(panelHeader(opts.code, opts.title));
+
+      const row = el('div', 'tool-toggle-row');
+      const valueEl = el('div', 'tool-value tool-value--text', opts.value ? onLabel : offLabel);
+      const toggle = document.createElement('input');
+      toggle.type = 'checkbox';
+      toggle.className = 'tool-toggle';
+      toggle.checked = opts.value;
+      toggle.addEventListener('change', () => {
+        valueEl.textContent = toggle.checked ? onLabel : offLabel;
+        opts.onChange(toggle.checked);
+      });
+      row.appendChild(valueEl);
+      row.appendChild(toggle);
+      panel.appendChild(row);
+
+      container.appendChild(panel);
+      return {
+        refresh(v) {
+          toggle.checked = v;
+          valueEl.textContent = v ? onLabel : offLabel;
+        }
+      };
+    }
+
+    function createSelectPanel(container, opts) {
+      const labels = opts.labels || {};
+      const panel = el('div', 'lcars-panel');
+      panel.appendChild(panelHeader(opts.code, opts.title));
+
+      const valueEl = el('div', 'tool-value tool-value--text', opts.value);
+      panel.appendChild(valueEl);
+
+      const optsRow = el('div', 'tool-select');
+      const buttons = opts.options.map(optVal => {
+        const btn = el('button', 'tool-select__opt' + (optVal === opts.value ? ' is-active' : ''), labels[optVal] || optVal);
+        btn.type = 'button';
+        btn.dataset.value = optVal;
+        btn.addEventListener('click', () => {
+          buttons.forEach(b => b.classList.remove('is-active'));
+          btn.classList.add('is-active');
+          valueEl.textContent = optVal;
+          opts.onChange(optVal);
+        });
+        optsRow.appendChild(btn);
+        return btn;
+      });
+      panel.appendChild(optsRow);
+
+      container.appendChild(panel);
+      return {
+        refresh(v) {
+          valueEl.textContent = v;
+          buttons.forEach(b => b.classList.toggle('is-active', b.dataset.value === v));
+        }
+      };
+    }
+
+    function createColorPanel(container, opts) {
+      const panel = el('div', 'lcars-panel');
+      panel.appendChild(panelHeader(opts.code, opts.title));
+
+      const row = el('div', 'tool-color-row');
+      const valueEl = el('div', 'tool-value tool-value--text', opts.value.toUpperCase());
+      const swatch = document.createElement('input');
+      swatch.type = 'color';
+      swatch.className = 'tool-color-swatch';
+      swatch.value = opts.value;
+      swatch.addEventListener('input', () => {
+        valueEl.textContent = swatch.value.toUpperCase();
+        opts.onChange(swatch.value);
+      });
+      row.appendChild(swatch);
+      row.appendChild(valueEl);
+      panel.appendChild(row);
+
+      container.appendChild(panel);
+      return {
+        refresh(v) {
+          swatch.value = v;
+          valueEl.textContent = v.toUpperCase();
+        }
+      };
+    }
+
+    // --- LCARS HUD: menu + tabs scaffold ---
+    const hudMenu = document.getElementById('lcars-menu');
+    const hudPanels = document.getElementById('lcars-tabpanels');
+
+    const TABS = [
+      { id: 'source', label: 'Source', accent: '#ff9c00' },
+      { id: 'orbit', label: 'Orbit', accent: '#cc99cc' },
+      { id: 'cube', label: 'Cube', accent: '#9999ff' },
+      { id: 'surface', label: 'Surface', accent: '#ffcc66' },
+      { id: 'runner', label: 'Runner', accent: '#ff6666' },
+      { id: 'camera', label: 'Camera', accent: '#66ccff' }
+    ];
+
+    const tabPanelEls = {};
+    TABS.forEach((tab, i) => {
+      const btn = el('button', 'lcars-tab' + (i === 0 ? ' is-active' : ''), tab.label);
+      btn.type = 'button';
+      btn.style.setProperty('--tab-accent', tab.accent);
+      btn.addEventListener('click', () => activateTab(tab.id));
+      hudMenu.appendChild(btn);
+      tab.btn = btn;
+
+      const panelEl = el('div', 'lcars-tabpanel' + (i === 0 ? ' is-active' : ''));
+      panelEl.style.setProperty('--accent', tab.accent);
+      hudPanels.appendChild(panelEl);
+      tabPanelEls[tab.id] = panelEl;
     });
-    fColors.addColor(params.surfaceColors, 'inwardFace').name('Inward Face (Center)').onChange(updateMaterials);
-    fColors.addColor(params.surfaceColors, 'outwardFace').name('Outward Face (Away)').onChange(updateMaterials);
-    fColors.addColor(params.surfaceColors, 'parallelFaces').name('Parallel Faces (Horizon/Side)').onChange(updateMaterials);
 
-    // 2. Cube Entity Dimensions
-    const fCube = gui.addFolder('Cube Dimensions');
-    fCube.add(params.cube, 'proportionalLock').name('Lock XYZ Proportions');
-    const cUniform = fCube.add(params.cube, 'uniformScale', 0.5, 20, 0.1).name('Uniform Size').onChange((v) => {
+    function activateTab(id) {
+      TABS.forEach(tab => {
+        const active = tab.id === id;
+        tab.btn.classList.toggle('is-active', active);
+        tabPanelEls[tab.id].classList.toggle('is-active', active);
+      });
+    }
+
+    const sourceTab = tabPanelEls.source;
+    const orbitTab = tabPanelEls.orbit;
+    const cubeTab = tabPanelEls.cube;
+    const surfaceTab = tabPanelEls.surface;
+    const runnerTab = tabPanelEls.runner;
+    const cameraTab = tabPanelEls.camera;
+
+    // 1. Central Source — the construct's core, everything else is built around it
+    createColorPanel(sourceTab, { code: 'SRC-01', title: 'Source Color', value: params.source.color, onChange: c => {
+      params.source.color = c;
+      centralPointLight.color.set(c);
+      sourceMeshMat.color.set(c);
+    }});
+    createSliderPanel(sourceTab, { code: 'SRC-02', title: 'Intensity', unit: '×', min: 0, max: 10, step: 0.1, value: params.source.intensity, format: v => v.toFixed(1), onInput: v => {
+      params.source.intensity = v;
+      centralPointLight.intensity = v;
+    }});
+    createSliderPanel(sourceTab, { code: 'SRC-03', title: 'Source Size', unit: 'u', min: 0.1, max: 10, step: 0.1, value: params.source.size, format: v => v.toFixed(1), onInput: v => {
+      params.source.size = v;
+      sourceMesh.scale.setScalar(v);
+    }});
+    createSliderPanel(sourceTab, { code: 'SRC-04', title: 'Light Range', unit: 'u', min: 10, max: 300, step: 1, value: params.source.distance, format: v => Math.round(v), onInput: v => {
+      params.source.distance = v;
+      centralPointLight.distance = v;
+    }});
+
+    // 2. Orbit & Central Cog — the structural mechanism orbiting the source
+    createSliderPanel(orbitTab, { code: 'ORB-01', title: 'Cube Count', unit: 'n', min: 3, max: 24, step: 1, value: params.orbit.count, format: v => Math.round(v), onInput: v => {
+      params.orbit.count = Math.round(v);
+      buildOrbitingCubes();
+    }});
+    createSliderPanel(orbitTab, { code: 'ORB-02', title: 'Orbit Radius', unit: 'u', min: 10, max: 100, step: 0.5, value: params.orbit.radius, format: v => v.toFixed(1), onInput: v => {
+      params.orbit.radius = v;
+      buildOrbitingCubes();
+    }});
+    createSliderPanel(orbitTab, { code: 'ORB-03', title: 'Orbit Speed', unit: 'rad/s', min: -2.0, max: 2.0, step: 0.01, value: params.orbit.speed, format: v => v.toFixed(2), onInput: v => {
+      params.orbit.speed = v;
+    }});
+    createSliderPanel(orbitTab, { code: 'ORB-04', title: 'Cog System Scale', unit: '×', min: 0.1, max: 5.0, step: 0.1, value: params.orbit.cogSize, format: v => v.toFixed(1), onInput: v => {
+      params.orbit.cogSize = v;
+      orbitGroup.scale.set(v, 1, v);
+    }});
+
+    // 3. Cube Entity Dimensions — geometry of the orbiting units themselves
+    createTogglePanel(cubeTab, { code: 'CUB-01', title: 'Lock XYZ Proportions', value: params.cube.proportionalLock, onLabel: 'LOCKED', offLabel: 'UNLOCKED', onChange: v => {
+      params.cube.proportionalLock = v;
+    }});
+    createSliderPanel(cubeTab, { code: 'CUB-02', title: 'Uniform Size', unit: 'u', min: 0.5, max: 20, step: 0.1, value: params.cube.uniformScale, format: v => v.toFixed(1), onInput: v => {
+      params.cube.uniformScale = v;
       if (params.cube.proportionalLock) {
         params.cube.sizeX = v;
         params.cube.sizeY = v;
         params.cube.sizeZ = v;
-        cX.updateDisplay();
-        cY.updateDisplay();
-        cZ.updateDisplay();
+        cXPanel.refresh(v);
+        cYPanel.refresh(v);
+        cZPanel.refresh(v);
         updateCubeScale();
       }
-    });
-    const cX = fCube.add(params.cube, 'sizeX', 0.5, 30, 0.1).name('Dimension X').onChange(() => {
+    }});
+    const cXPanel = createSliderPanel(cubeTab, { code: 'CUB-03', title: 'Dimension X', unit: 'u', min: 0.5, max: 30, step: 0.1, value: params.cube.sizeX, format: v => v.toFixed(1), sub: true, onInput: v => {
+      params.cube.sizeX = v;
       if (!params.cube.proportionalLock) updateCubeScale();
-    });
-    const cY = fCube.add(params.cube, 'sizeY', 0.5, 30, 0.1).name('Dimension Y').onChange(() => {
+    }});
+    const cYPanel = createSliderPanel(cubeTab, { code: 'CUB-04', title: 'Dimension Y', unit: 'u', min: 0.5, max: 30, step: 0.1, value: params.cube.sizeY, format: v => v.toFixed(1), sub: true, onInput: v => {
+      params.cube.sizeY = v;
       if (!params.cube.proportionalLock) updateCubeScale();
-    });
-    const cZ = fCube.add(params.cube, 'sizeZ', 0.5, 30, 0.1).name('Dimension Z').onChange(() => {
+    }});
+    const cZPanel = createSliderPanel(cubeTab, { code: 'CUB-05', title: 'Dimension Z', unit: 'u', min: 0.5, max: 30, step: 0.1, value: params.cube.sizeZ, format: v => v.toFixed(1), sub: true, onInput: v => {
+      params.cube.sizeZ = v;
       if (!params.cube.proportionalLock) updateCubeScale();
-    });
+    }});
 
-    // 3. Orbit & Central Cog
-    const fOrbit = gui.addFolder('Orbit & Cog Parameters');
-    fOrbit.add(params.orbit, 'count', 3, 24, 1).name('Cube Count').onChange(buildOrbitingCubes);
-    fOrbit.add(params.orbit, 'radius', 10, 100, 0.5).name('Orbit Radius').onChange(buildOrbitingCubes);
-    fOrbit.add(params.orbit, 'speed', -2.0, 2.0, 0.01).name('Orbit Speed');
-    fOrbit.add(params.orbit, 'cogSize', 0.1, 5.0, 0.1).name('Cog System Scale').onChange(v => {
-      orbitGroup.scale.set(v, 1, v);
+    // 4. Surface Colors — material finish applied on top of the geometry
+    createSelectPanel(surfaceTab, {
+      code: 'SRF-01',
+      title: 'Palette Preset',
+      options: ['Default (Black/Grey/White)', 'High Contrast Inverted', 'Monochrome Dark'],
+      labels: {
+        'Default (Black/Grey/White)': 'Default',
+        'High Contrast Inverted': 'Inverted',
+        'Monochrome Dark': 'Mono Dark'
+      },
+      value: params.surfaceColors.preset,
+      onChange: v => {
+        params.surfaceColors.preset = v;
+        if (v === 'Default (Black/Grey/White)') {
+          params.surfaceColors.inwardFace = '#ffffff';
+          params.surfaceColors.outwardFace = '#000000';
+          params.surfaceColors.parallelFaces = '#808080';
+        } else if (v === 'High Contrast Inverted') {
+          params.surfaceColors.inwardFace = '#000000';
+          params.surfaceColors.outwardFace = '#ffffff';
+          params.surfaceColors.parallelFaces = '#444444';
+        } else if (v === 'Monochrome Dark') {
+          params.surfaceColors.inwardFace = '#888888';
+          params.surfaceColors.outwardFace = '#111111';
+          params.surfaceColors.parallelFaces = '#333333';
+        }
+        inwardPanel.refresh(params.surfaceColors.inwardFace);
+        outwardPanel.refresh(params.surfaceColors.outwardFace);
+        parallelPanel.refresh(params.surfaceColors.parallelFaces);
+        updateMaterials();
+      }
     });
+    const inwardPanel = createColorPanel(surfaceTab, { code: 'SRF-02', title: 'Inward Face (Center)', value: params.surfaceColors.inwardFace, onChange: c => {
+      params.surfaceColors.inwardFace = c;
+      updateMaterials();
+    }});
+    const outwardPanel = createColorPanel(surfaceTab, { code: 'SRF-03', title: 'Outward Face (Away)', value: params.surfaceColors.outwardFace, onChange: c => {
+      params.surfaceColors.outwardFace = c;
+      updateMaterials();
+    }});
+    const parallelPanel = createColorPanel(surfaceTab, { code: 'SRF-04', title: 'Parallel Faces (Horizon/Side)', value: params.surfaceColors.parallelFaces, onChange: c => {
+      params.surfaceColors.parallelFaces = c;
+      updateMaterials();
+    }});
 
-    // 4. Central Source
-    const fSource = gui.addFolder('Central Light Source');
-    fSource.addColor(params.source, 'color').name('Source Color').onChange(c => {
-      centralPointLight.color.set(c);
-      sourceMeshMat.color.set(c);
-    });
-    fSource.add(params.source, 'size', 0.1, 10.0, 0.1).name('Source Size').onChange(v => {
-      sourceMesh.scale.setScalar(v);
-    });
-    fSource.add(params.source, 'intensity', 0.0, 10.0, 0.1).name('Intensity').onChange(v => {
-      centralPointLight.intensity = v;
-    });
-    fSource.add(params.source, 'distance', 10, 300, 1).name('Light Range').onChange(v => {
-      centralPointLight.distance = v;
-    });
-
-    // 5. Runner Controls
-    const fRunner = gui.addFolder('Runner Parameters');
-    fRunner.add(params.runner, 'active').name('Enable Run Path');
-    fRunner.add(params.runner, 'size', 0.1, 5.0, 0.05).name('Runner Size').onChange(v => {
+    // 5. Runner — the moving entity travelling the construct
+    createTogglePanel(runnerTab, { code: 'RUN-01', title: 'Enable Run Path', value: params.runner.active, onLabel: 'ACTIVE', offLabel: 'STANDBY', onChange: v => {
+      params.runner.active = v;
+    }});
+    createSliderPanel(runnerTab, { code: 'RUN-02', title: 'Runner Size', unit: '×', min: 0.1, max: 5.0, step: 0.05, value: params.runner.size, format: v => v.toFixed(2), onInput: v => {
+      params.runner.size = v;
       runnerGroup.scale.setScalar(v);
-    });
-    fRunner.add(params.runner, 'pathLength', 10, 150, 1).name('Path Length');
-    fRunner.add(params.runner, 'speed', 1.0, 40.0, 0.5).name('Run Speed');
-    fRunner.addColor(params.runner, 'color').name('Runner Color').onChange(c => {
+    }});
+    createSliderPanel(runnerTab, { code: 'RUN-03', title: 'Path Length', unit: 'u', min: 10, max: 150, step: 1, value: params.runner.pathLength, format: v => Math.round(v), onInput: v => {
+      params.runner.pathLength = v;
+    }});
+    createSliderPanel(runnerTab, { code: 'RUN-04', title: 'Run Speed', unit: 'u/s', min: 1.0, max: 40.0, step: 0.5, value: params.runner.speed, format: v => v.toFixed(1), onInput: v => {
+      params.runner.speed = v;
+    }});
+    createColorPanel(runnerTab, { code: 'RUN-05', title: 'Runner Color', value: params.runner.color, onChange: c => {
+      params.runner.color = c;
       runnerBodyMat.color.set(c);
       limbMat.color.set(c);
-    });
+    }});
 
-    // 6. Camera Settings
-    const fCamera = gui.addFolder('Camera Controls');
-    fCamera.add(params.camera, 'trackingMode', ['Runner Tracking', 'Free Orbit Overview', 'Static Origin View']).name('Perspective');
-    fCamera.add(params.camera, 'fov', 20, 100, 1).name('Camera FOV').onChange(v => {
+    // 6. Camera — the observer's viewpoint onto everything above
+    createSelectPanel(cameraTab, {
+      code: 'CAM-01',
+      title: 'Perspective',
+      options: ['Runner Tracking', 'Free Orbit Overview', 'Static Origin View'],
+      labels: { 'Runner Tracking': 'Runner', 'Free Orbit Overview': 'Free Orbit', 'Static Origin View': 'Static' },
+      value: params.camera.trackingMode,
+      onChange: v => {
+        params.camera.trackingMode = v;
+      }
+    });
+    createSliderPanel(cameraTab, { code: 'CAM-02', title: 'Camera FOV', unit: '°', min: 20, max: 100, step: 1, value: params.camera.fov, format: v => Math.round(v), onInput: v => {
+      params.camera.fov = v;
       camera.fov = v;
       camera.updateProjectionMatrix();
-    });
-    fCamera.add(params.camera, 'distance', 2, 40, 0.5).name('Follow Distance');
-    fCamera.add(params.camera, 'height', 0.5, 20, 0.5).name('Follow Height');
+    }});
+    createSliderPanel(cameraTab, { code: 'CAM-03', title: 'Follow Distance', unit: 'u', min: 2, max: 40, step: 0.5, value: params.camera.distance, format: v => v.toFixed(1), onInput: v => {
+      params.camera.distance = v;
+    }});
+    createSliderPanel(cameraTab, { code: 'CAM-04', title: 'Follow Height', unit: 'u', min: 0.5, max: 20, step: 0.5, value: params.camera.height, format: v => v.toFixed(1), onInput: v => {
+      params.camera.height = v;
+    }});
 
     // --- Animation Loop ---
     const clock = new THREE.Clock();
