@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>8-Cube Occlusion Construct</title>
   <style>
     body, html {
@@ -18,6 +18,9 @@
       width: 100%;
       height: 100%;
       display: block;
+      /* Hand every touch gesture (drag-orbit, pinch-zoom) to OrbitControls
+         instead of letting the browser scroll/zoom the page with it. */
+      touch-action: none;
     }
     /* --- LCARS HUD --- */
     .lcars-hud {
@@ -36,7 +39,52 @@
       font-family: monospace;
       z-index: 20;
       overflow: hidden;
+      /* Menu stays finger-friendly: taps register instantly and double-tap
+         never triggers the browser's page-zoom gesture. */
+      touch-action: manipulation;
     }
+
+    .lcars-hud__selection {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: rgba(51, 255, 255, 0.08);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 11px;
+      letter-spacing: 1px;
+    }
+
+    .lcars-hud__selection[hidden] { display: none; }
+
+    .lcars-hud__selection-label {
+      color: #33ffff;
+      font-weight: bold;
+    }
+
+    .lcars-hud__selection-value {
+      flex: 1;
+      overflow: hidden;
+      color: #fff;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .lcars-hud__selection-clear {
+      width: 22px;
+      height: 22px;
+      font-family: inherit;
+      font-size: 11px;
+      line-height: 1;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.12);
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .lcars-hud__selection-clear:hover { background: rgba(255, 255, 255, 0.25); }
 
     .lcars-hud__title {
       display: flex;
@@ -259,6 +307,7 @@
     }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
   <div id="canvas-container"></div>
@@ -267,6 +316,11 @@
     <div class="lcars-hud__title">
       Construct Controls
       <span class="lcars-hud__subtitle">HUD-01</span>
+    </div>
+    <div class="lcars-hud__selection" id="lcars-selection" hidden>
+      <span class="lcars-hud__selection-label">SEL</span>
+      <span class="lcars-hud__selection-value" id="lcars-selection-value">—</span>
+      <button class="lcars-hud__selection-clear" id="lcars-selection-clear" type="button" aria-label="Clear selection">✕</button>
     </div>
     <nav class="lcars-menu" id="lcars-menu"></nav>
     <div class="lcars-tabpanels" id="lcars-tabpanels"></div>
@@ -472,6 +526,118 @@
     // Initial scale & position
     runnerGroup.scale.setScalar(params.runner.size);
     let runnerDistance = params.runner.pathLength;
+
+    // --- Manual Camera Controls (mouse drag / touch drag, wheel / pinch zoom) ---
+    // Registered unconditionally so the gesture handlers are always attached;
+    // `controls.enabled` gates whether they actually move the camera, since
+    // the auto-tracking modes below drive camera.position/lookAt themselves.
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 4;
+    controls.maxDistance = 260;
+    controls.target.set(0, 0, 0);
+    controls.enabled = false;
+    controls.update();
+
+    // --- Entity Selection (double-click / double-tap) ---
+    const raycaster = new THREE.Raycaster();
+    const pointerNDC = new THREE.Vector2();
+    let selectionHelper = null;
+    let selectedEntity = null;
+
+    const selectionBar = document.getElementById('lcars-selection');
+    const selectionValueEl = document.getElementById('lcars-selection-value');
+    const selectionClearBtn = document.getElementById('lcars-selection-clear');
+
+    function selectableTargets() {
+      return [...cubes, sourceMesh, torso, leftLeg, rightLeg];
+    }
+
+    // Map a raw raycast hit back to the logical entity it belongs to
+    function resolveEntity(obj) {
+      const cubeIndex = cubes.indexOf(obj);
+      if (cubeIndex !== -1) return { root: obj, label: 'Orbit Cube ' + (cubeIndex + 1) };
+      if (obj === sourceMesh) return { root: obj, label: 'Central Source' };
+      if (obj === torso || obj === leftLeg || obj === rightLeg) return { root: runnerGroup, label: 'Runner' };
+      return null;
+    }
+
+    function setSelection(entity) {
+      clearSelection();
+      selectedEntity = entity.root;
+      selectionHelper = new THREE.BoxHelper(entity.root, 0x33ffff);
+      scene.add(selectionHelper);
+      selectionValueEl.textContent = entity.label;
+      selectionBar.hidden = false;
+      // In Manual Control mode, re-center orbiting on whatever was just selected
+      if (controls.enabled) {
+        const targetPos = new THREE.Vector3();
+        entity.root.getWorldPosition(targetPos);
+        controls.target.copy(targetPos);
+      }
+    }
+
+    function clearSelection() {
+      if (selectionHelper) {
+        scene.remove(selectionHelper);
+        selectionHelper.geometry.dispose();
+        selectionHelper.material.dispose();
+        selectionHelper = null;
+      }
+      selectedEntity = null;
+      selectionBar.hidden = true;
+    }
+
+    function handleActivateAt(clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerNDC.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointerNDC.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointerNDC, camera);
+
+      const hits = raycaster.intersectObjects(selectableTargets(), false);
+      if (hits.length === 0) {
+        clearSelection();
+        return;
+      }
+      const entity = resolveEntity(hits[0].object);
+      if (!entity) {
+        clearSelection();
+        return;
+      }
+      // Double-tapping the already-selected entity deselects it
+      if (selectedEntity === entity.root) {
+        clearSelection();
+      } else {
+        setSelection(entity);
+      }
+    }
+
+    selectionClearBtn.addEventListener('click', clearSelection);
+
+    // Unified double-click (mouse) / double-tap (touch) detection via Pointer
+    // Events, so both input types share one code path instead of relying on
+    // the (touch-unreliable) native 'dblclick' event.
+    let lastActivate = { time: 0, x: 0, y: 0, pointerType: '' };
+    const DOUBLE_TAP_MS = 350;
+    const DOUBLE_TAP_PX = 28;
+
+    renderer.domElement.addEventListener('pointerup', (e) => {
+      const now = performance.now();
+      const dx = e.clientX - lastActivate.x;
+      const dy = e.clientY - lastActivate.y;
+      const isDoubleActivate =
+        (now - lastActivate.time) < DOUBLE_TAP_MS &&
+        Math.hypot(dx, dy) < DOUBLE_TAP_PX &&
+        e.pointerType === lastActivate.pointerType;
+
+      if (isDoubleActivate) {
+        handleActivateAt(e.clientX, e.clientY);
+        lastActivate.time = 0; // consume, so a triple tap doesn't re-trigger
+      } else {
+        lastActivate = { time: now, x: e.clientX, y: e.clientY, pointerType: e.pointerType };
+      }
+    });
 
     // --- Dynamic Updates Helper Functions ---
     function updateMaterials() {
@@ -803,11 +969,22 @@
     createSelectPanel(cameraTab, {
       code: 'CAM-01',
       title: 'Perspective',
-      options: ['Runner Tracking', 'Free Orbit Overview', 'Static Origin View'],
-      labels: { 'Runner Tracking': 'Runner', 'Free Orbit Overview': 'Free Orbit', 'Static Origin View': 'Static' },
+      options: ['Runner Tracking', 'Free Orbit Overview', 'Static Origin View', 'Manual Control'],
+      labels: {
+        'Runner Tracking': 'Runner',
+        'Free Orbit Overview': 'Free Orbit',
+        'Static Origin View': 'Static',
+        'Manual Control': 'Manual'
+      },
       value: params.camera.trackingMode,
       onChange: v => {
         params.camera.trackingMode = v;
+        controls.enabled = (v === 'Manual Control');
+        if (controls.enabled) {
+          // Pick up wherever the camera currently is instead of snapping
+          controls.target.set(0, runnerGroup.position.y, 0);
+          controls.update();
+        }
       }
     });
     createSliderPanel(cameraTab, { code: 'CAM-02', title: 'Camera FOV', unit: '°', min: 20, max: 100, step: 1, value: params.camera.fov, format: v => Math.round(v), onInput: v => {
@@ -864,6 +1041,15 @@
       } else if (params.camera.trackingMode === 'Static Origin View') {
         camera.position.set(0, 5, params.orbit.radius * 1.8);
         camera.lookAt(0, 0, 0);
+      } else if (params.camera.trackingMode === 'Manual Control') {
+        // Mouse-drag / touch-drag orbit, wheel / pinch zoom
+        controls.update();
+      }
+
+      // Keep the selection outline glued to its (possibly moving) target
+      if (selectionHelper) {
+        scene.updateMatrixWorld();
+        selectionHelper.update();
       }
 
       renderer.render(scene, camera);
