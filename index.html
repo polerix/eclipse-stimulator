@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>8-Cube Occlusion Construct</title>
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000;
+      font-family: monospace;
+    }
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .lil-gui {
+      --background-color: #111;
+      --text-color: #ddd;
+      --title-background-color: #222;
+      --widget-color: #333;
+      --hover-color: #444;
+      --focus-color: #555;
+      --number-color: #fff;
+      --string-color: #aaa;
+      font-family: monospace;
+      font-size: 11px;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19"></script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <script>
+    // --- Application State & Parameters ---
+    const params = {
+      // Surface Colors (Strict 3-tone or custom)
+      surfaceColors: {
+        preset: 'Default (Black/Grey/White)',
+        inwardFace: '#ffffff',   // facing center
+        outwardFace: '#000000',  // facing away
+        parallelFaces: '#808080' // parallel to horizon & sides
+      },
+      // Orbit & Central Cog
+      orbit: {
+        radius: 35,
+        speed: 0.25,
+        count: 8,
+        cogSize: 1.0
+      },
+      // Orbiting Cubes Dimension
+      cube: {
+        sizeX: 6,
+        sizeY: 6,
+        sizeZ: 6,
+        proportionalLock: true,
+        uniformScale: 6
+      },
+      // Central Light Source
+      source: {
+        color: '#ffffff',
+        intensity: 2.0,
+        size: 1.5,
+        distance: 120,
+        decay: 1.0
+      },
+      // Runner
+      runner: {
+        size: 0.8,
+        pathLength: 60,
+        speed: 12.0,
+        color: '#000000',
+        active: true
+      },
+      // Camera Controls
+      camera: {
+        fov: 50,
+        trackingMode: 'Runner Tracking',
+        distance: 12,
+        height: 3.5
+      }
+    };
+
+    // --- Scene, Renderer & Global References ---
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0a);
+
+    const camera = new THREE.PerspectiveCamera(
+      params.camera.fov,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    // --- Central Light & Mesh ---
+    const centralPointLight = new THREE.PointLight(
+      params.source.color,
+      params.source.intensity,
+      params.source.distance,
+      params.source.decay
+    );
+    centralPointLight.castShadow = true;
+    centralPointLight.shadow.mapSize.width = 2048;
+    centralPointLight.shadow.mapSize.height = 2048;
+    centralPointLight.shadow.bias = -0.001;
+    scene.add(centralPointLight);
+
+    const sourceMeshGeo = new THREE.SphereGeometry(params.source.size, 32, 16);
+    const sourceMeshMat = new THREE.MeshBasicMaterial({ color: params.source.color });
+    const sourceMesh = new THREE.Mesh(sourceMeshGeo, sourceMeshMat);
+    scene.add(sourceMesh);
+
+    // Ambient fill to keep absolute non-lit areas legible if desired
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.05);
+    scene.add(ambientLight);
+
+    // Ground plane (horizon aligner & shadow catcher)
+    const floorGeo = new THREE.PlaneGeometry(300, 300);
+    const floorMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -params.cube.sizeY / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // --- Cube Materials Construction ---
+    // Standard BoxGeometry material array order: [+X, -X, +Y, -Y, +Z, -Z]
+    // In local space: +Z points outwards away from center, -Z points inwards toward center
+    function createCubeMaterials() {
+      const matInward = new THREE.MeshStandardMaterial({
+        color: params.surfaceColors.inwardFace,
+        roughness: 0.2,
+        metalness: 0.1
+      });
+      const matOutward = new THREE.MeshBasicMaterial({
+        color: params.surfaceColors.outwardFace
+      });
+      const matParallel = new THREE.MeshBasicMaterial({
+        color: params.surfaceColors.parallelFaces
+      });
+
+      return [
+        matParallel, // +X (side)
+        matParallel, // -X (side)
+        matParallel, // +Y (top parallel to horizon)
+        matParallel, // -Y (bottom parallel to horizon)
+        matOutward,  // +Z (facing outward away from source)
+        matInward    // -Z (facing inward directly towards central source)
+      ];
+    }
+
+    let cubeMaterials = createCubeMaterials();
+
+    // --- Orbiting Group & Cubes ---
+    const orbitGroup = new THREE.Group();
+    scene.add(orbitGroup);
+
+    const cubes = [];
+    const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
+
+    function buildOrbitingCubes() {
+      // Clear existing
+      while (orbitGroup.children.length > 0) {
+        orbitGroup.remove(orbitGroup.children[0]);
+      }
+      cubes.length = 0;
+
+      const count = params.orbit.count;
+      for (let i = 0; i < count; i++) {
+        const mesh = new THREE.Mesh(cubeGeo, cubeMaterials);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+
+        const angle = (i / count) * Math.PI * 2;
+        mesh.position.set(
+          Math.cos(angle) * params.orbit.radius,
+          0,
+          Math.sin(angle) * params.orbit.radius
+        );
+
+        // Orient box so -Z faces the origin (0, 0, 0)
+        mesh.lookAt(0, 0, 0);
+
+        // Apply scale
+        mesh.scale.set(params.cube.sizeX, params.cube.sizeY, params.cube.sizeZ);
+
+        orbitGroup.add(mesh);
+        cubes.push(mesh);
+      }
+    }
+
+    buildOrbitingCubes();
+
+    // --- Runner Entity ---
+    const runnerGroup = new THREE.Group();
+    scene.add(runnerGroup);
+
+    const runnerBodyMat = new THREE.MeshStandardMaterial({
+      color: params.runner.color,
+      roughness: 0.4
+    });
+
+    // Articulated runner blocks
+    const torsoGeo = new THREE.BoxGeometry(0.8, 1.2, 0.5);
+    const torso = new THREE.Mesh(torsoGeo, runnerBodyMat);
+    torso.castShadow = true;
+    torso.position.y = 1.2;
+    runnerGroup.add(torso);
+
+    const limbMat = new THREE.MeshStandardMaterial({ color: params.runner.color });
+    const legGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3);
+    
+    const leftLeg = new THREE.Mesh(legGeo, limbMat);
+    leftLeg.position.set(-0.25, 0.4, 0);
+    leftLeg.castShadow = true;
+    runnerGroup.add(leftLeg);
+
+    const rightLeg = new THREE.Mesh(legGeo, limbMat);
+    rightLeg.position.set(0.25, 0.4, 0);
+    rightLeg.castShadow = true;
+    runnerGroup.add(rightLeg);
+
+    // Initial scale & position
+    runnerGroup.scale.setScalar(params.runner.size);
+    let runnerDistance = params.runner.pathLength;
+
+    // --- Dynamic Updates Helper Functions ---
+    function updateMaterials() {
+      cubeMaterials[0].color.set(params.surfaceColors.parallelFaces);
+      cubeMaterials[1].color.set(params.surfaceColors.parallelFaces);
+      cubeMaterials[2].color.set(params.surfaceColors.parallelFaces);
+      cubeMaterials[3].color.set(params.surfaceColors.parallelFaces);
+      cubeMaterials[4].color.set(params.surfaceColors.outwardFace);
+      cubeMaterials[5].color.set(params.surfaceColors.inwardFace);
+    }
+
+    function updateCubeScale() {
+      cubes.forEach(cube => {
+        cube.scale.set(params.cube.sizeX, params.cube.sizeY, params.cube.sizeZ);
+      });
+      floor.position.y = -params.cube.sizeY / 2;
+    }
+
+    // --- GUI Setup ---
+    const gui = new lil.GUI({ title: 'Construct Controls' });
+
+    // 1. Surface Colors Folder
+    const fColors = gui.addFolder('Surface Color Controls');
+    fColors.add(params.surfaceColors, 'preset', [
+      'Default (Black/Grey/White)',
+      'High Contrast Inverted',
+      'Monochrome Dark'
+    ]).name('Palette Preset').onChange((v) => {
+      if (v === 'Default (Black/Grey/White)') {
+        params.surfaceColors.inwardFace = '#ffffff';
+        params.surfaceColors.outwardFace = '#000000';
+        params.surfaceColors.parallelFaces = '#808080';
+      } else if (v === 'High Contrast Inverted') {
+        params.surfaceColors.inwardFace = '#000000';
+        params.surfaceColors.outwardFace = '#ffffff';
+        params.surfaceColors.parallelFaces = '#444444';
+      } else if (v === 'Monochrome Dark') {
+        params.surfaceColors.inwardFace = '#888888';
+        params.surfaceColors.outwardFace = '#111111';
+        params.surfaceColors.parallelFaces = '#333333';
+      }
+      gui.controllersRecursive().forEach(c => c.updateDisplay());
+      updateMaterials();
+    });
+    fColors.addColor(params.surfaceColors, 'inwardFace').name('Inward Face (Center)').onChange(updateMaterials);
+    fColors.addColor(params.surfaceColors, 'outwardFace').name('Outward Face (Away)').onChange(updateMaterials);
+    fColors.addColor(params.surfaceColors, 'parallelFaces').name('Parallel Faces (Horizon/Side)').onChange(updateMaterials);
+
+    // 2. Cube Entity Dimensions
+    const fCube = gui.addFolder('Cube Dimensions');
+    fCube.add(params.cube, 'proportionalLock').name('Lock XYZ Proportions');
+    const cUniform = fCube.add(params.cube, 'uniformScale', 0.5, 20, 0.1).name('Uniform Size').onChange((v) => {
+      if (params.cube.proportionalLock) {
+        params.cube.sizeX = v;
+        params.cube.sizeY = v;
+        params.cube.sizeZ = v;
+        cX.updateDisplay();
+        cY.updateDisplay();
+        cZ.updateDisplay();
+        updateCubeScale();
+      }
+    });
+    const cX = fCube.add(params.cube, 'sizeX', 0.5, 30, 0.1).name('Dimension X').onChange(() => {
+      if (!params.cube.proportionalLock) updateCubeScale();
+    });
+    const cY = fCube.add(params.cube, 'sizeY', 0.5, 30, 0.1).name('Dimension Y').onChange(() => {
+      if (!params.cube.proportionalLock) updateCubeScale();
+    });
+    const cZ = fCube.add(params.cube, 'sizeZ', 0.5, 30, 0.1).name('Dimension Z').onChange(() => {
+      if (!params.cube.proportionalLock) updateCubeScale();
+    });
+
+    // 3. Orbit & Central Cog
+    const fOrbit = gui.addFolder('Orbit & Cog Parameters');
+    fOrbit.add(params.orbit, 'count', 3, 24, 1).name('Cube Count').onChange(buildOrbitingCubes);
+    fOrbit.add(params.orbit, 'radius', 10, 100, 0.5).name('Orbit Radius').onChange(buildOrbitingCubes);
+    fOrbit.add(params.orbit, 'speed', -2.0, 2.0, 0.01).name('Orbit Speed');
+    fOrbit.add(params.orbit, 'cogSize', 0.1, 5.0, 0.1).name('Cog System Scale').onChange(v => {
+      orbitGroup.scale.set(v, 1, v);
+    });
+
+    // 4. Central Source
+    const fSource = gui.addFolder('Central Light Source');
+    fSource.addColor(params.source, 'color').name('Source Color').onChange(c => {
+      centralPointLight.color.set(c);
+      sourceMeshMat.color.set(c);
+    });
+    fSource.add(params.source, 'size', 0.1, 10.0, 0.1).name('Source Size').onChange(v => {
+      sourceMesh.scale.setScalar(v);
+    });
+    fSource.add(params.source, 'intensity', 0.0, 10.0, 0.1).name('Intensity').onChange(v => {
+      centralPointLight.intensity = v;
+    });
+    fSource.add(params.source, 'distance', 10, 300, 1).name('Light Range').onChange(v => {
+      centralPointLight.distance = v;
+    });
+
+    // 5. Runner Controls
+    const fRunner = gui.addFolder('Runner Parameters');
+    fRunner.add(params.runner, 'active').name('Enable Run Path');
+    fRunner.add(params.runner, 'size', 0.1, 5.0, 0.05).name('Runner Size').onChange(v => {
+      runnerGroup.scale.setScalar(v);
+    });
+    fRunner.add(params.runner, 'pathLength', 10, 150, 1).name('Path Length');
+    fRunner.add(params.runner, 'speed', 1.0, 40.0, 0.5).name('Run Speed');
+    fRunner.addColor(params.runner, 'color').name('Runner Color').onChange(c => {
+      runnerBodyMat.color.set(c);
+      limbMat.color.set(c);
+    });
+
+    // 6. Camera Settings
+    const fCamera = gui.addFolder('Camera Controls');
+    fCamera.add(params.camera, 'trackingMode', ['Runner Tracking', 'Free Orbit Overview', 'Static Origin View']).name('Perspective');
+    fCamera.add(params.camera, 'fov', 20, 100, 1).name('Camera FOV').onChange(v => {
+      camera.fov = v;
+      camera.updateProjectionMatrix();
+    });
+    fCamera.add(params.camera, 'distance', 2, 40, 0.5).name('Follow Distance');
+    fCamera.add(params.camera, 'height', 0.5, 20, 0.5).name('Follow Height');
+
+    // --- Animation Loop ---
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const delta = clock.getDelta();
+      const elapsedTime = clock.getElapsedTime();
+
+      // Orbit Rotation
+      orbitGroup.rotation.y += params.orbit.speed * delta;
+
+      // Runner Motion along Z axis towards center
+      if (params.runner.active) {
+        runnerDistance -= params.runner.speed * delta;
+        // Stop before colliding directly into the light source, loop back
+        const stopDistance = (params.orbit.radius * params.orbit.cogSize) - (params.cube.sizeZ / 2) - 2;
+        if (runnerDistance < Math.max(stopDistance, 2.0)) {
+          runnerDistance = params.runner.pathLength;
+        }
+        runnerGroup.position.set(0, 0, runnerDistance);
+
+        // Articulated leg swing
+        const swing = Math.sin(elapsedTime * params.runner.speed * 1.5) * 0.6;
+        leftLeg.rotation.x = swing;
+        rightLeg.rotation.x = -swing;
+      }
+
+      // Camera Positioning Modes
+      if (params.camera.trackingMode === 'Runner Tracking') {
+        const camZ = runnerGroup.position.z + params.camera.distance;
+        const camY = runnerGroup.position.y + params.camera.height;
+        camera.position.set(0, camY, camZ);
+        camera.lookAt(0, runnerGroup.position.y + 1, 0); // Horizon-aligned tracking straight to light
+      } else if (params.camera.trackingMode === 'Free Orbit Overview') {
+        const angle = elapsedTime * 0.1;
+        const dist = params.orbit.radius * 2.2;
+        camera.position.set(Math.cos(angle) * dist, 25, Math.sin(angle) * dist);
+        camera.lookAt(0, 0, 0);
+      } else if (params.camera.trackingMode === 'Static Origin View') {
+        camera.position.set(0, 5, params.orbit.radius * 1.8);
+        camera.lookAt(0, 0, 0);
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // --- Resize Handler ---
+    window.addEventListener('resize', onWindowResize, false);
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
