@@ -1246,17 +1246,33 @@
     // --- Cube Materials Construction ---
     // Standard BoxGeometry material array order: [+X, -X, +Y, -Y, +Z, -Z]
     // In local space: +Z points outwards away from center, -Z points inwards toward center
+    //
+    // All three orientations use the same light-responsive material family
+    // (MeshStandardMaterial) — only the inward face used to. The outward
+    // and parallel faces were MeshBasicMaterial, which ignores the central
+    // light entirely: same flat color at any Source Intensity/Range, no
+    // shading gradient, no shadow. For a construct whose whole premise is
+    // faces occluding/reflecting a central source, that meant 5 of every
+    // orbital's 6 faces had no relationship to the light at all. Each face
+    // still gets its own strict, independently assigned color exactly as
+    // before (see the surfaceColors params/panels) — this only makes that
+    // assigned color actually respond to the light hitting it, the same
+    // fix already applied to the floor/sky surfaces.
     function createCubeMaterials() {
       const matInward = new THREE.MeshStandardMaterial({
         color: params.surfaceColors.inwardFace,
         roughness: 0.2,
         metalness: 0.1
       });
-      const matOutward = new THREE.MeshBasicMaterial({
-        color: params.surfaceColors.outwardFace
+      const matOutward = new THREE.MeshStandardMaterial({
+        color: params.surfaceColors.outwardFace,
+        roughness: 0.2,
+        metalness: 0.1
       });
-      const matParallel = new THREE.MeshBasicMaterial({
-        color: params.surfaceColors.parallelFaces
+      const matParallel = new THREE.MeshStandardMaterial({
+        color: params.surfaceColors.parallelFaces,
+        roughness: 0.2,
+        metalness: 0.1
       });
 
       return [
