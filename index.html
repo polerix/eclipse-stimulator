@@ -694,12 +694,15 @@
         outwardFace: '#000000',  // facing away
         parallelFaces: '#808080' // parallel to horizon & sides
       },
-      // Orbit & Central Cog
+      // Orbit & Central Cog. Radius/Speed double as the seed for a real
+      // simulated gravity system now (see gravitationalParameter()) — see
+      // the Orbital Collision Avoidance / Gravity Simulation section.
       orbit: {
         radius: 35,
         speed: 0.25,
         count: 8,
-        cogSize: 1.0
+        cogSize: 1.0,
+        eccentricity: 0.2 // 0 = perfect circle, up to ~0.9 = stretched ellipse
       },
       // Orbiting Cubes Dimension
       cube: {
@@ -741,7 +744,25 @@
         active: true,
         // Live sidestep around orbitals the path would otherwise cross —
         // see the Orbital Collision Avoidance section, further down.
-        avoidance: true
+        avoidance: true,
+        // 'Scripted Path' is everything above (nodes/mode/corner) exactly
+        // as before. 'Gravity Orbit' ignores the authored path entirely —
+        // the runner becomes a real physics body launched from `gravity`
+        // below and its trajectory emerges from the same gravity law that
+        // governs the orbitals, rather than being hand-drawn.
+        motionMode: 'Scripted Path', // 'Scripted Path' | 'Gravity Orbit'
+        gravity: {
+          startDistance: 50,        // launch distance from the source
+          startAngleDeg: 0,         // launch position, angle around the source
+          speedRatio: 0.7,          // launch speed ÷ local circular speed
+          // 0 = perfectly tangential (prograde) launch; ±90 = launched
+          // straight in/out. Combined with speedRatio this sweeps the full
+          // conic-section family — circular, elliptical, parabolic (right
+          // at speedRatio ≈ 1.414 tangential), hyperbolic — the same
+          // family Dr. Tyson was getting at with "the shape of its
+          // parabola."
+          launchAngleOffsetDeg: 0
+        }
       },
       // Camera Controls
       camera: {
@@ -1287,6 +1308,80 @@
 
     let cubeMaterials = createCubeMaterials();
 
+    // --- Shared Gravity Law ---
+    // Dr. Tyson's review: the orbitals and the Runner's trajectory should
+    // conform to one shared law of gravity instead of each moving by its
+    // own disconnected rule, and every entity should be positioned
+    // relative to the center of the (gravitational) sphere — the source,
+    // fixed at the world origin. This is that one law: a single
+    // gravitational parameter (mu, ~ G·M) derived from the existing Orbit
+    // tab controls, referenced by both the orbitals (below) and the
+    // Runner's Gravity Orbit motion mode (see the Runner section). mu is
+    // chosen so a purely tangential launch at the configured Orbit Radius
+    // and Orbit Speed traces a circular orbit — the existing sliders stay
+    // the intuitive "seed" for the system, even though everything that
+    // happens after seeding is now real simulated 2-body gravity instead
+    // of a fixed rotation. Deliberately planar (XZ, y=0) rather than fully
+    // 3D — the orbitals keep the flat "central cog" identity the rest of
+    // the HUD (Cog System Scale) already commits to, and the Runner's
+    // Gravity Orbit mode shares that same plane so it can actually pass
+    // through the orbit ring (and stay subject to Orbital Avoidance)
+    // instead of simulating a disconnected 3D swarm.
+    function gravitationalParameter() {
+      return Math.max(0.5, Math.pow(params.orbit.speed, 2) * Math.pow(params.orbit.radius, 3));
+    }
+
+    // One physics substep: symplectic (semi-implicit) Euler — velocity is
+    // updated from the *current* position's acceleration first, then
+    // position is advanced with the *new* velocity. Far more stable over
+    // many orbits than naive Euler (which visibly spirals outward over
+    // time) at effectively no extra cost.
+    function gravityStep(state, dt, mu) {
+      const distSq = state.x * state.x + state.z * state.z;
+      const dist = Math.sqrt(distSq) || 0.0001;
+      const accel = -mu / distSq;
+      state.vx += accel * (state.x / dist) * dt;
+      state.vz += accel * (state.z / dist) * dt;
+      state.x += state.vx * dt;
+      state.z += state.vz * dt;
+    }
+
+    // Real per-frame deltas can be too coarse for stable integration close
+    // to the source; subdividing into small fixed substeps keeps orbits
+    // numerically well-behaved regardless of frame rate.
+    const GRAVITY_SUBSTEP = 1 / 240;
+    function integrateGravity(state, totalDt, mu) {
+      let remaining = totalDt;
+      while (remaining > 0) {
+        const dt = Math.min(GRAVITY_SUBSTEP, remaining);
+        gravityStep(state, dt, mu);
+        remaining -= dt;
+      }
+    }
+
+    // Kepler's third law, for the orbital period of a given semi-major axis.
+    function orbitalPeriod(semiMajorAxis, mu) {
+      return 2 * Math.PI * Math.sqrt(Math.pow(semiMajorAxis, 3) / mu);
+    }
+
+    // Seeds one body's (position, velocity) state on the ellipse defined by
+    // periapsis radius r0 and eccentricity e — starting purely tangential
+    // at periapsis (the vis-viva speed for that point), then fast-forwards
+    // it along that same real trajectory by a fraction of the orbital
+    // period, using the exact same integrator that runs every frame. That
+    // means N bodies sharing one physical ellipse, seeded at even
+    // *phaseFraction* steps, end up evenly spaced in time rather than in
+    // raw angle — matching how real orbiting bodies actually distribute
+    // (Kepler's second law: faster near periapsis, slower near apoapsis).
+    function seedGravityState(mu, r0, eccentricity, direction, phaseFraction) {
+      const v0 = Math.sqrt(mu * (1 + eccentricity) / r0);
+      const state = { x: r0, z: 0, vx: 0, vz: direction * v0 };
+      const semiMajorAxis = r0 / (1 - eccentricity);
+      const period = orbitalPeriod(semiMajorAxis, mu);
+      integrateGravity(state, phaseFraction * period, mu);
+      return state;
+    }
+
     // --- Orbiting Group & Cubes ---
     const orbitGroup = new THREE.Group();
     scene.add(orbitGroup);
@@ -1302,17 +1397,20 @@
       cubes.length = 0;
 
       const count = params.orbit.count;
+      const mu = gravitationalParameter();
+      const direction = params.orbit.speed < 0 ? -1 : 1;
+
       for (let i = 0; i < count; i++) {
         const mesh = new THREE.Mesh(cubeGeo, cubeMaterials);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
 
-        const angle = (i / count) * Math.PI * 2;
-        mesh.position.set(
-          Math.cos(angle) * params.orbit.radius,
-          0,
-          Math.sin(angle) * params.orbit.radius
-        );
+        // Each orbital carries its own simulated (position, velocity)
+        // state — no longer a fixed angle on a rigidly rotating group,
+        // since an elliptical orbit's angular rate isn't constant.
+        const state = seedGravityState(mu, params.orbit.radius, params.orbit.eccentricity, direction, i / count);
+        mesh.userData.gState = state;
+        mesh.position.set(state.x, 0, state.z);
 
         // Orient box so -Z faces the origin (0, 0, 0)
         mesh.lookAt(0, 0, 0);
@@ -1845,7 +1943,9 @@
     // The path is only shown/draggable while it's actually being edited, so
     // the scene stays clean the rest of the time.
     function updatePathMarkersVisibility() {
-      setPathMarkersVisible(menuOpen && activeTabId === 'runner');
+      // No point showing drag handles for a path that isn't driving the
+      // runner right now — Gravity Orbit mode ignores it entirely.
+      setPathMarkersVisible(menuOpen && activeTabId === 'runner' && params.runner.motionMode === 'Scripted Path');
     }
 
     // Drag-to-edit path nodes (mouse + touch), constrained to the node's own
@@ -2281,11 +2381,21 @@
       buildOrbitingCubes();
     }});
     createSliderPanel(orbitTab, { code: 'ORB-03', title: 'Orbit Speed', unit: 'rad/s', min: -2.0, max: 2.0, step: 0.01, value: params.orbit.speed, format: v => v.toFixed(2), onInput: v => {
+      // Now the seed rate for the shared gravity law (mu ∝ speed² ·
+      // radius³, see gravitationalParameter()) rather than a fixed
+      // rotation rate — a live drag immediately changes how strongly
+      // *every* orbital and a Gravity Orbit runner are pulled, without
+      // needing a reseed, the same way changing a star's mass would.
+      // Sign still flips orbit direction (used only at the next reseed).
       params.orbit.speed = v;
     }});
     createSliderPanel(orbitTab, { code: 'ORB-04', title: 'Cog System Scale', unit: '×', min: 0.1, max: 5.0, step: 0.1, value: params.orbit.cogSize, format: v => v.toFixed(1), onInput: v => {
       params.orbit.cogSize = v;
       orbitGroup.scale.set(v, 1, v);
+    }});
+    createSliderPanel(orbitTab, { code: 'ORB-05', title: 'Orbit Eccentricity', unit: '', min: 0, max: 0.9, step: 0.05, value: params.orbit.eccentricity, format: v => v.toFixed(2), onInput: v => {
+      params.orbit.eccentricity = v;
+      buildOrbitingCubes();
     }});
 
     // 3. Orbital Entity Dimensions — geometry of the orbiting units themselves
@@ -2371,6 +2481,27 @@
         runnerDirection = 1;
       }
     }});
+    // Which motion system moves the runner: the pre-existing authored
+    // waypoint path, or the new gravity-simulated body (see the Shared
+    // Gravity Law / Runner: Gravity Orbit sections). Placed right after
+    // Enable Run Path since it decides which of the two panel groups
+    // below actually applies.
+    const scriptedOnlyPanels = [];
+    const gravityOnlyPanels = [];
+    createSelectPanel(runnerTab, {
+      code: 'RUN-17',
+      title: 'Motion Mode',
+      options: ['Scripted Path', 'Gravity Orbit'],
+      value: params.runner.motionMode,
+      onChange: v => {
+        params.runner.motionMode = v;
+        const scripted = v === 'Scripted Path';
+        scriptedOnlyPanels.forEach(p => p.setVisible(scripted));
+        gravityOnlyPanels.forEach(p => p.setVisible(!scripted));
+        updatePathMarkersVisibility();
+        if (!scripted) seedGravityRunner();
+      }
+    });
     createSelectPanel(runnerTab, {
       code: 'RUN-02',
       title: 'Runner Shape',
@@ -2394,7 +2525,7 @@
       params.runner.size = v;
       runnerGroup.scale.setScalar(v);
     }});
-    createSelectPanel(runnerTab, {
+    const scriptedPlaybackPanel = createSelectPanel(runnerTab, {
       code: 'RUN-05',
       title: 'Path Playback',
       options: ['Loop', 'Play Once', 'Boomerang'],
@@ -2404,7 +2535,7 @@
         runnerDirection = 1;
       }
     });
-    createSelectPanel(runnerTab, {
+    const scriptedCorneringPanel = createSelectPanel(runnerTab, {
       code: 'RUN-06',
       title: 'Path Cornering',
       options: ['Square', 'Round'],
@@ -2414,7 +2545,7 @@
         syncPath();
       }
     });
-    createSliderPanel(runnerTab, { code: 'RUN-07', title: 'Path Nodes', unit: 'n', min: 2, max: 6, step: 1, value: params.runner.path.nodes.length, format: v => Math.round(v), onInput: v => {
+    const scriptedNodesPanel = createSliderPanel(runnerTab, { code: 'RUN-07', title: 'Path Nodes', unit: 'n', min: 2, max: 6, step: 1, value: params.runner.path.nodes.length, format: v => Math.round(v), onInput: v => {
       setPathNodeCount(Math.round(v));
       syncPath({ rebuildMarkers: true });
       const nodes = params.runner.path.nodes;
@@ -2453,9 +2584,36 @@
       nodes[nodes.length - 1].z = v;
       syncPath();
     }});
-    createSliderPanel(runnerTab, { code: 'RUN-14', title: 'Run Speed', unit: 'u/s', min: 1.0, max: 40.0, step: 0.5, value: params.runner.speed, format: v => v.toFixed(1), onInput: v => {
+    const scriptedSpeedPanel = createSliderPanel(runnerTab, { code: 'RUN-14', title: 'Run Speed', unit: 'u/s', min: 1.0, max: 40.0, step: 0.5, value: params.runner.speed, format: v => v.toFixed(1), onInput: v => {
       params.runner.speed = v;
     }});
+    scriptedOnlyPanels.push(scriptedPlaybackPanel, scriptedCorneringPanel, scriptedNodesPanel, pathStartXPanel, pathStartYPanel, pathStartZPanel, pathEndXPanel, pathEndYPanel, pathEndZPanel, scriptedSpeedPanel);
+
+    const gravityStartDistPanel = createSliderPanel(runnerTab, {
+      code: 'RUN-18', title: 'Gravity Start Distance', unit: 'u', min: 15, max: 150, step: 1, value: params.runner.gravity.startDistance, format: v => Math.round(v),
+      visible: params.runner.motionMode === 'Gravity Orbit',
+      onInput: v => { params.runner.gravity.startDistance = v; seedGravityRunner(); }
+    });
+    const gravityStartAnglePanel = createSliderPanel(runnerTab, {
+      code: 'RUN-19', title: 'Gravity Start Angle', unit: '°', min: 0, max: 360, step: 1, value: params.runner.gravity.startAngleDeg, format: v => Math.round(v),
+      visible: params.runner.motionMode === 'Gravity Orbit',
+      onInput: v => { params.runner.gravity.startAngleDeg = v; seedGravityRunner(); }
+    });
+    const gravitySpeedRatioPanel = createSliderPanel(runnerTab, {
+      code: 'RUN-20', title: 'Gravity Speed Ratio', unit: '× circular', min: 0.1, max: 2.0, step: 0.05, value: params.runner.gravity.speedRatio, format: v => v.toFixed(2),
+      visible: params.runner.motionMode === 'Gravity Orbit',
+      // <1 = falls inward from an apoapsis start; 1 = circular; up to
+      // ~1.41 = increasingly eccentric ellipse; ~1.41 = parabolic escape;
+      // >1.41 = hyperbolic flyby that leaves for good (until it's relaunched).
+      onInput: v => { params.runner.gravity.speedRatio = v; seedGravityRunner(); }
+    });
+    const gravityLaunchAnglePanel = createSliderPanel(runnerTab, {
+      code: 'RUN-21', title: 'Gravity Launch Angle', unit: '°', min: -90, max: 90, step: 1, value: params.runner.gravity.launchAngleOffsetDeg, format: v => Math.round(v),
+      visible: params.runner.motionMode === 'Gravity Orbit',
+      onInput: v => { params.runner.gravity.launchAngleOffsetDeg = v; seedGravityRunner(); }
+    });
+    gravityOnlyPanels.push(gravityStartDistPanel, gravityStartAnglePanel, gravitySpeedRatioPanel, gravityLaunchAnglePanel);
+
     createColorPanel(runnerTab, { code: 'RUN-15', title: 'Runner Color', value: params.runner.color, onChange: c => {
       params.runner.color = c;
       runnerBodyMat.color.set(c);
@@ -2883,6 +3041,44 @@
       return strongestUrgency;
     }
 
+    // --- Runner: Gravity Orbit motion mode ---
+    // The runner as a real physics body, launched from params.runner.gravity
+    // and integrated every frame under the exact same gravitationalParameter()
+    // the orbitals use — an emergent trajectory instead of authored waypoints.
+    let gravityRunnerState = null; // { x, z, vx, vz }, plane shared with the orbitals
+
+    function seedGravityRunner() {
+      const mu = gravitationalParameter();
+      const g = params.runner.gravity;
+      const angle = g.startAngleDeg * Math.PI / 180;
+      const x = Math.cos(angle) * g.startDistance;
+      const z = Math.sin(angle) * g.startDistance;
+      const vCircular = Math.sqrt(mu / g.startDistance);
+      const speed = g.speedRatio * vCircular;
+      // Tangent direction at this point, then rotated by the launch angle
+      // offset: 0° = tangential (prograde orbit), ±90° = straight in/out.
+      const tangentAngle = angle + Math.PI / 2;
+      const launchAngle = tangentAngle + (g.launchAngleOffsetDeg * Math.PI / 180);
+      gravityRunnerState = {
+        x, z,
+        vx: Math.cos(launchAngle) * speed,
+        vz: Math.sin(launchAngle) * speed
+      };
+    }
+
+    // A hyperbolic/parabolic launch (speedRatio ≳ 1.414 tangential)
+    // genuinely escapes and never comes back — rather than leaving the
+    // runner gone for good, relaunch it once it's far enough away, the
+    // same spirit as Scripted mode's Loop/Boomerang keeping the runner
+    // perpetually visible instead of a one-shot that just vanishes.
+    const GRAVITY_RUNNER_MAX_DIST = 260;
+    function updateGravityRunner(delta) {
+      if (!gravityRunnerState) seedGravityRunner();
+      integrateGravity(gravityRunnerState, delta, gravitationalParameter());
+      const dist = Math.hypot(gravityRunnerState.x, gravityRunnerState.z);
+      if (dist > GRAVITY_RUNNER_MAX_DIST) seedGravityRunner();
+    }
+
     // --- Animation Loop ---
     const clock = new THREE.Clock();
 
@@ -2892,11 +3088,49 @@
       const delta = clock.getDelta();
       const elapsedTime = clock.getElapsedTime();
 
-      // Orbit Rotation
-      orbitGroup.rotation.y += params.orbit.speed * delta;
+      // Orbit Motion — real simulated gravity (see the Shared Gravity Law
+      // section) rather than a fixed rotation. Each orbital's own
+      // userData.gState is integrated independently, so an elliptical
+      // orbit's angular rate isn't locked to a rigid rotating group.
+      const orbitMu = gravitationalParameter();
+      cubes.forEach(cube => {
+        const state = cube.userData.gState;
+        if (!state) return;
+        integrateGravity(state, delta, orbitMu);
+        cube.position.set(state.x, 0, state.z);
+        cube.lookAt(0, 0, 0);
+      });
 
-      // Runner Motion along its configured path (start/end/nodes)
-      if (params.runner.active && pathSampler && pathSampler.length > 0) {
+      // Runner Motion — 'Scripted Path' (authored waypoints, unchanged
+      // from before) or 'Gravity Orbit' (an emergent trajectory under the
+      // same gravity law as the orbitals — see Shared Gravity Law above
+      // and seedGravityRunner()/updateGravityRunner() below).
+      if (params.runner.active && params.runner.motionMode === 'Gravity Orbit') {
+        updateGravityRunner(delta);
+        const rawX = gravityRunnerState.x, rawY = 0, rawZ = gravityRunnerState.z;
+        lastAvoidUrgency = updateOrbitalAvoidance(delta, rawX, rawY, rawZ);
+        runnerGroup.position.set(rawX + avoidOffsetX, rawY, rawZ + avoidOffsetZ);
+
+        // Face the actual direction of travel — the velocity vector IS
+        // the tangent of the curving trajectory, no separate lookahead
+        // sample needed the way the sampled scripted path requires.
+        const vx = gravityRunnerState.vx, vz = gravityRunnerState.vz;
+        const speed = Math.hypot(vx, vz);
+        if (speed > 1e-4) {
+          runnerForward.x = vx / speed;
+          runnerForward.z = vz / speed;
+          runnerGroup.lookAt(rawX + vx + avoidOffsetX, rawY, rawZ + vz + avoidOffsetZ);
+        }
+
+        // Articulated leg swing (Rectifier shape only) — driven by the
+        // runner's actual current physics speed instead of the Scripted
+        // mode's Run Speed slider, which has no meaning here.
+        if (runnerLegs) {
+          const swing = Math.sin(elapsedTime * Math.max(speed, 0.5) * 1.5) * 0.6;
+          runnerLegs.left.rotation.x = swing;
+          runnerLegs.right.rotation.x = -swing;
+        }
+      } else if (params.runner.active && pathSampler && pathSampler.length > 0) {
         // Slow the advance while actively dodging an orbital (urgency
         // ramped up by last frame's avoidance check) — cautious near a
         // hazard, back to full speed the moment it's clear.
