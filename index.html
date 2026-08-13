@@ -88,6 +88,11 @@
     }
 
     .lcars-hud__bar-label {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
       font-size: 15px;
       font-weight: 700;
       letter-spacing: 2px;
@@ -95,6 +100,7 @@
     }
 
     .lcars-hud__bar-code {
+      flex-shrink: 0;
       display: flex;
       flex-direction: column;
       align-items: flex-end;
@@ -128,6 +134,43 @@
     @keyframes lcars-pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.25; }
+    }
+
+    /* Muted by default — this is the only way interface sound turns on */
+    .lcars-hud__audio-toggle {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      appearance: none;
+      -webkit-appearance: none;
+      margin: 0 8px;
+      padding: 3px 8px;
+      font-family: inherit;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: rgba(0, 0, 0, 0.55);
+      background: rgba(0, 0, 0, 0.12);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+
+    .lcars-hud__audio-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.3);
+    }
+
+    .lcars-hud__audio-toggle[aria-pressed="true"] {
+      color: #000;
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .lcars-hud__audio-toggle[aria-pressed="true"] .lcars-hud__audio-dot {
+      background: #000;
     }
 
     .lcars-hud__cap {
@@ -592,7 +635,8 @@
     .tool-program-load:focus-visible,
     .tool-program-delete:focus-visible,
     .tool-textarea:focus-visible,
-    .lcars-hud__selection-clear:focus-visible {
+    .lcars-hud__selection-clear:focus-visible,
+    .lcars-hud__audio-toggle:focus-visible {
       outline: 2px solid var(--lcars-alert);
       outline-offset: 2px;
     }
@@ -609,7 +653,11 @@
 
   <div class="lcars-hud" id="lcars-hud">
     <div class="lcars-hud__bar">
-      <span class="lcars-hud__bar-label">Construct Controls</span>
+      <span class="lcars-hud__bar-label">Controls</span>
+      <button type="button" class="lcars-hud__audio-toggle" id="lcars-audio-toggle" aria-pressed="false" aria-label="Toggle interface sound">
+        <span class="lcars-hud__audio-dot" aria-hidden="true"></span>
+        SND
+      </button>
       <span class="lcars-hud__bar-code" aria-hidden="true">
         <span class="lcars-hud__bar-code-row">
           <span class="lcars-hud__pulse"></span>
@@ -1435,23 +1483,30 @@
 
       const hits = raycaster.intersectObjects(selectableTargets(), false);
       if (hits.length === 0) {
+        if (selectedEntity) playDismiss();
         clearSelection();
         return;
       }
       const entity = resolveEntity(hits[0].object);
       if (!entity) {
+        if (selectedEntity) playDismiss();
         clearSelection();
         return;
       }
       // Double-tapping the already-selected entity deselects it
       if (selectedEntity === entity.root) {
+        playDismiss();
         clearSelection();
       } else {
         setSelection(entity);
+        playConfirm();
       }
     }
 
-    selectionClearBtn.addEventListener('click', clearSelection);
+    selectionClearBtn.addEventListener('click', () => {
+      if (selectedEntity) playDismiss();
+      clearSelection();
+    });
 
     // --- Living-system telemetry (purely decorative, aria-hidden) ---
     // A stardate ticker and a few flavor readouts in the spine — they don't
@@ -1509,6 +1564,7 @@
       hudHintEl.hidden = true;
       updatePathMarkersVisibility();
       startTelemetry();
+      playOpen();
       // Move focus into the panel, same as any standard disclosure widget —
       // TABS/activeTabId are defined further down but this only runs later,
       // after a real open gesture, by which point they're long since ready.
@@ -1523,6 +1579,7 @@
       hudHintEl.hidden = false;
       updatePathMarkersVisibility();
       stopTelemetry();
+      playDismiss();
       hudHintEl.focus(); // return focus to the (now visible again) summon control
     }
 
@@ -1753,6 +1810,56 @@
 
     window.addEventListener('pointerup', () => { draggingNodeIndex = null; });
 
+    // --- Interaction Audio (synthesized, muted by default) ---
+    // Never plays on page load — only ever invoked from inside a click/key
+    // event handler, which is exactly what the browser autoplay policy
+    // requires anyway. No audio files: a handful of short Web Audio
+    // oscillator blips instead, kept deliberately quiet and few in number.
+    let audioCtx = null;
+    let audioEnabled = false;
+
+    function ensureAudioContext() {
+      if (!audioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        audioCtx = new Ctx();
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
+
+    function playBlip(freqStart, freqEnd, duration, volume) {
+      if (!audioEnabled) return;
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freqStart, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(freqEnd, 1), ctx.currentTime + duration);
+      gain.gain.setValueAtTime(volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    }
+
+    function playTick() { playBlip(880, 1100, 0.06, 0.05); }    // any button/tab/toggle press
+    function playConfirm() { playBlip(660, 990, 0.09, 0.06); }  // entity selected
+    function playDismiss() { playBlip(990, 660, 0.09, 0.06); }  // entity deselected / HUD closed
+    function playOpen() { playBlip(520, 1040, 0.12, 0.06); }    // HUD opened
+
+    const audioToggleBtn = document.getElementById('lcars-audio-toggle');
+    audioToggleBtn.addEventListener('click', () => {
+      audioEnabled = !audioEnabled;
+      audioToggleBtn.setAttribute('aria-pressed', audioEnabled ? 'true' : 'false');
+      if (audioEnabled) {
+        ensureAudioContext();
+        playTick(); // immediate confirmation that sound just turned on
+      }
+    });
+
     // --- Dynamic Updates Helper Functions ---
     function updateMaterials() {
       cubeMaterials[0].color.set(params.surfaceColors.parallelFaces);
@@ -1851,6 +1958,7 @@
       toggle.checked = opts.value;
       toggle.setAttribute('aria-labelledby', titleId);
       toggle.addEventListener('change', () => {
+        playTick();
         valueEl.textContent = toggle.checked ? onLabel : offLabel;
         opts.onChange(toggle.checked);
       });
@@ -1885,6 +1993,7 @@
         btn.dataset.value = optVal;
         btn.setAttribute('aria-pressed', optVal === opts.value ? 'true' : 'false');
         btn.addEventListener('click', () => {
+          playTick();
           buttons.forEach(b => {
             b.classList.remove('is-active');
             b.setAttribute('aria-pressed', 'false');
@@ -1961,6 +2070,7 @@
       input.addEventListener('change', () => {
         const file = input.files && input.files[0];
         if (file) {
+          playTick();
           valueEl.textContent = file.name.toUpperCase();
           opts.onChange(file);
         }
@@ -2029,6 +2139,7 @@
         tabPanelEls[tab.id].classList.toggle('is-active', active);
       });
       updatePathMarkersVisibility();
+      playTick(); // no-ops silently at the initial bootstrap call — audio starts off
     }
 
     // Left/Right/Home/End moves focus AND activates — the standard ARIA
@@ -2444,6 +2555,7 @@
       btn.className = 'tool-text-button';
       btn.textContent = 'Save';
       const submit = () => {
+        playTick();
         const name = input.value.trim();
         if (!name) { statusEl.textContent = 'ENTER A NAME'; return; }
         onSave(name, statusEl, () => { input.value = ''; });
@@ -2482,6 +2594,8 @@
           loadBtn.className = 'tool-program-load';
           loadBtn.textContent = 'Load';
           loadBtn.setAttribute('aria-label', 'Load saved program ' + name);
+          // No playTick() here (or on Import) — loadProgram() reloads the
+          // page immediately, cutting the blip off before it's audible.
           loadBtn.addEventListener('click', () => loadProgram(name));
           row.appendChild(loadBtn);
 
@@ -2491,6 +2605,7 @@
           delBtn.textContent = '✕';
           delBtn.setAttribute('aria-label', 'Delete saved program ' + name);
           delBtn.addEventListener('click', () => {
+            playTick();
             deleteProgram(name);
             refresh();
           });
@@ -2524,6 +2639,7 @@
       btn.className = 'tool-text-button';
       btn.textContent = 'Generate + Copy';
       btn.addEventListener('click', () => {
+        playTick();
         const code = exportProgramCode(snapshotParams());
         textarea.value = code;
         textarea.select();
