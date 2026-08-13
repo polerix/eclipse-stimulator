@@ -42,19 +42,25 @@
     }
     /* --- LCARS HUD --- */
     /* Closed by default: summoned with a double-tap/double-click anywhere in
-       the scene, dismissed with a double-tap/double-click anywhere on it. */
+       the scene, dismissed with a double-tap/double-click anywhere on it.
+       The frame is built from four flat, opaque blocks laid out on a grid —
+       a header bar, a corner cap, a category-colored spine, and the body —
+       instead of one translucent rounded card. No blur, no gradients, no
+       drop shadows: LCARS was flat design before "flat design" had a name. */
     .lcars-hud {
       position: fixed;
       top: 20px;
       right: 20px;
-      width: 320px;
+      width: 348px;
       max-height: calc(100vh - 40px);
       display: none;
-      flex-direction: column;
-      background: rgba(8, 8, 10, 0.88);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 18px;
-      backdrop-filter: blur(6px);
+      grid-template-columns: 1fr 26px;
+      grid-template-rows: 46px 1fr;
+      grid-template-areas:
+        "bar  cap"
+        "body spine";
+      gap: 3px; /* the black "grout" seam between blocks */
+      background: #000;
       color: #e8e8e8;
       font-family: 'Antonio', 'Arial Narrow', sans-serif;
       z-index: 20;
@@ -64,21 +70,70 @@
       touch-action: manipulation;
     }
 
-    .lcars-hud.is-open { display: flex; }
+    .lcars-hud.is-open { display: grid; }
+
+    /* The elbow: header bar + spine meeting a swept corner cap. Sharp on the
+       two outer corners that align with the screen edge, one big radius on
+       the inner corner facing the content — LCARS's signature joint. */
+    .lcars-hud__bar {
+      grid-area: bar;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      background: var(--lcars-butterscotch);
+      color: #000;
+    }
+
+    .lcars-hud__bar-label {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .lcars-hud__bar-code {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      opacity: 0.6;
+    }
+
+    .lcars-hud__cap {
+      grid-area: cap;
+      background: var(--lcars-butterscotch);
+      border-radius: 2px 2px 2px 999px;
+    }
+
+    /* Tracks the active tab's color — a live "you are here" wayfinding cue */
+    .lcars-hud__spine {
+      grid-area: spine;
+      background: var(--spine-accent, var(--lcars-butterscotch));
+      transition: background 0.2s;
+    }
+
+    .lcars-hud__body {
+      grid-area: body;
+      min-height: 0; /* let this grid item shrink so its own child can scroll */
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #000;
+    }
 
     .lcars-hud-hint {
       position: fixed;
       top: 20px;
       right: 20px;
-      padding: 8px 14px;
+      padding: 8px 16px;
       font-family: 'Antonio', 'Arial Narrow', sans-serif;
       font-size: 11px;
+      font-weight: 700;
       letter-spacing: 1px;
       text-transform: uppercase;
-      color: rgba(255, 156, 0, 0.75); /* --lcars-butterscotch, washed */
-      background: rgba(8, 8, 10, 0.7);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 18px;
+      color: #000;
+      background: var(--lcars-butterscotch);
+      border-radius: 2px 2px 2px 20px; /* echoes the cap's sweep, closed-state preview */
       z-index: 20;
       /* Purely informational — never steal the double-tap meant for the canvas underneath */
       pointer-events: none;
@@ -91,23 +146,21 @@
       align-items: center;
       gap: 8px;
       padding: 8px 16px;
-      background: rgba(51, 255, 255, 0.08);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--lcars-alert);
+      color: #000;
       font-size: 11px;
+      font-weight: 700;
       letter-spacing: 1px;
     }
 
     .lcars-hud__selection[hidden] { display: none; }
 
-    .lcars-hud__selection-label {
-      color: var(--lcars-alert);
-      font-weight: bold;
-    }
+    .lcars-hud__selection-label { color: #000; }
 
     .lcars-hud__selection-value {
       flex: 1;
       overflow: hidden;
-      color: #fff;
+      color: #000;
       text-overflow: ellipsis;
       text-transform: uppercase;
       white-space: nowrap;
@@ -119,69 +172,53 @@
       font-family: inherit;
       font-size: 11px;
       line-height: 1;
-      color: #fff;
-      background: rgba(255, 255, 255, 0.12);
+      color: #000;
+      background: rgba(0, 0, 0, 0.15);
       border: none;
       border-radius: 50%;
       cursor: pointer;
     }
 
-    .lcars-hud__selection-clear:hover { background: rgba(255, 255, 255, 0.25); }
-
-    .lcars-hud__title {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      padding: 12px 16px 10px;
-      font-size: 15px;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      color: var(--lcars-butterscotch);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    }
-
-    .lcars-hud__subtitle {
-      font-size: 10px;
-      letter-spacing: 1px;
-      opacity: 0.5;
-    }
+    .lcars-hud__selection-clear:hover { background: rgba(0, 0, 0, 0.3); }
 
     .lcars-menu {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px;
+      gap: 3px;
       padding: 10px 10px 8px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: #000;
     }
 
     .lcars-tab {
       flex: 1 1 auto;
       min-width: 72px;
       text-align: center;
-      padding: 6px 8px;
+      padding: 7px 8px;
       font-family: inherit;
       font-size: 10px;
+      font-weight: 600;
       letter-spacing: 1px;
       text-transform: uppercase;
-      color: #999;
-      background: rgba(255, 255, 255, 0.06);
+      color: var(--tab-accent, #999);
+      background: var(--tab-accent-dim, rgba(255, 255, 255, 0.06));
       border: none;
-      border-radius: 10px;
+      border-radius: 3px;
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
     }
 
-    .lcars-tab:hover { background: rgba(255, 255, 255, 0.12); color: #ddd; }
+    .lcars-tab:hover { filter: brightness(1.3); }
 
     .lcars-tab.is-active {
       background: var(--tab-accent, #ff9c00);
       color: #000;
-      font-weight: bold;
+      font-weight: 700;
     }
 
     .lcars-tabpanels {
       padding: 12px;
       overflow-y: auto;
+      background: #000;
     }
 
     .lcars-tabpanel {
@@ -193,10 +230,11 @@
     .lcars-tabpanel.is-active { display: flex; }
 
     .lcars-panel {
-      background: #131313;
-      border-left: 5px solid var(--accent, #ff9c00);
-      border-radius: 4px 12px 12px 4px;
-      padding: 8px 12px 10px;
+      background: #0d0d0d;
+      border-left: 4px solid var(--accent, #ff9c00);
+      border-radius: 3px 14px 14px 3px;
+      padding: 0 12px 10px;
+      overflow: hidden; /* clips the header chip's bleed to this panel's own rounded corners */
     }
 
     .lcars-panel--sub { margin-left: 14px; }
@@ -205,18 +243,21 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      margin: 0 -12px 8px; /* bleed edge-to-edge, cancelling the panel's own side padding */
+      padding: 5px 12px;
+      background: var(--accent, #ff9c00);
+      color: #000;
       text-transform: uppercase;
       font-size: 11px;
+      font-weight: 700;
       letter-spacing: 1px;
-      color: var(--accent, #ff9c00);
-      font-weight: bold;
     }
 
     .lcars-panel__code {
       font-size: 9px;
-      font-weight: normal;
+      font-weight: 600;
       letter-spacing: 0.5px;
-      opacity: 0.55;
+      color: rgba(0, 0, 0, 0.55);
     }
 
     .tool-value {
@@ -383,17 +424,21 @@
   <div class="lcars-hud-hint" id="lcars-hud-hint">HUD-01 · double-tap to open</div>
 
   <div class="lcars-hud" id="lcars-hud">
-    <div class="lcars-hud__title">
-      Construct Controls
-      <span class="lcars-hud__subtitle">HUD-01</span>
+    <div class="lcars-hud__bar">
+      <span class="lcars-hud__bar-label">Construct Controls</span>
+      <span class="lcars-hud__bar-code">HUD-01</span>
     </div>
-    <div class="lcars-hud__selection" id="lcars-selection" hidden>
-      <span class="lcars-hud__selection-label">SEL</span>
-      <span class="lcars-hud__selection-value" id="lcars-selection-value">—</span>
-      <button class="lcars-hud__selection-clear" id="lcars-selection-clear" type="button" aria-label="Clear selection">✕</button>
+    <div class="lcars-hud__cap"></div>
+    <div class="lcars-hud__body">
+      <div class="lcars-hud__selection" id="lcars-selection" hidden>
+        <span class="lcars-hud__selection-label">SEL</span>
+        <span class="lcars-hud__selection-value" id="lcars-selection-value">—</span>
+        <button class="lcars-hud__selection-clear" id="lcars-selection-clear" type="button" aria-label="Clear selection">✕</button>
+      </div>
+      <nav class="lcars-menu" id="lcars-menu"></nav>
+      <div class="lcars-tabpanels" id="lcars-tabpanels"></div>
     </div>
-    <nav class="lcars-menu" id="lcars-menu"></nav>
-    <div class="lcars-tabpanels" id="lcars-tabpanels"></div>
+    <div class="lcars-hud__spine"></div>
   </div>
 
   <script>
@@ -475,6 +520,16 @@
 
     function hexToNum(hex) {
       return parseInt(hex.replace('#', ''), 16);
+    }
+
+    // A near-black tint of a palette color, used for the inactive-tab
+    // background so even unselected categories hint at their own color
+    // instead of falling back to generic gray.
+    function dimHex(hex, blackMix) {
+      const n = hexToNum(hex);
+      const keep = 1 - blackMix;
+      const toHex = v => Math.round(v * keep).toString(16).padStart(2, '0');
+      return '#' + toHex((n >> 16) & 255) + toHex((n >> 8) & 255) + toHex(n & 255);
     }
 
     Object.entries(LCARS_PALETTE).forEach(([name, hex]) => {
@@ -1273,6 +1328,7 @@
       const btn = el('button', 'lcars-tab' + (i === 0 ? ' is-active' : ''), tab.label);
       btn.type = 'button';
       btn.style.setProperty('--tab-accent', tab.accent);
+      btn.style.setProperty('--tab-accent-dim', dimHex(tab.accent, 0.85));
       btn.addEventListener('click', () => activateTab(tab.id));
       hudMenu.appendChild(btn);
       tab.btn = btn;
@@ -1287,6 +1343,8 @@
 
     function activateTab(id) {
       activeTabId = id;
+      const activeTab = TABS.find(t => t.id === id);
+      if (activeTab) hudEl.style.setProperty('--spine-accent', activeTab.accent); // live "you are here" cue
       TABS.forEach(tab => {
         const active = tab.id === id;
         tab.btn.classList.toggle('is-active', active);
@@ -1294,6 +1352,8 @@
       });
       updatePathMarkersVisibility();
     }
+
+    activateTab(TABS[0].id); // seed the spine color to match the default active tab
 
     const sourceTab = tabPanelEls.source;
     const orbitTab = tabPanelEls.orbit;
