@@ -563,10 +563,12 @@
       // sky to invisible, so the scene looks unchanged until touched.
       world: {
         alignment: 'Cube', // 'Source' | 'Cube' | 'XYZ'
-        offset: { x: 0, y: 0, z: 0 } // used only when alignment is 'XYZ'
+        offset: { x: 0, y: 0, z: 0 }, // used only when alignment is 'XYZ'
+        // Floor and sky always share one geometry — changing it snaps both
+        // at once, so the two never end up as mismatched shapes.
+        geometry: 'Square' // 'Square' | 'Radial' | 'Hemisphere' | 'Cube'
       },
       floor: {
-        geometry: 'Square',   // 'Square' | 'Radial' | 'Hemisphere' | 'Cube'
         size: 300,
         surface: 'Color',     // 'Off' | 'Color' | 'Grid' | 'Image'
         color: '#111111',
@@ -574,7 +576,6 @@
         gridSize: 2
       },
       sky: {
-        geometry: 'Hemisphere',
         size: 400,
         surface: 'Off',
         color: '#0a0a1a',
@@ -704,7 +705,9 @@
 
     // Draws a single tile's border into a small canvas and tiles it via
     // texture.repeat — works on curved geometry too, unlike a flat line
-    // helper, so the same grid surface applies to a dome or a skybox.
+    // helper, so the same grid surface applies to a dome or a skybox. Used
+    // for every geometry except Radial, whose disc UVs don't map onto a
+    // repeating square tile sensibly (see buildRadialGridGroup below).
     function createGridTexture(color, lineWidthPx) {
       const res = 128;
       const canvas = document.createElement('canvas');
@@ -738,9 +741,16 @@
       return new THREE.MeshLambertMaterial({ color: config.color, side });
     }
 
+    // Y height for a flat (Square/Radial) surface, relative to the world
+    // anchor — shared by the mesh itself and the radial grid overlay below
+    // so the two always land on the same plane.
+    function flatSurfaceY(anchor, config, isSky) {
+      return isSky ? anchor.y + config.size * 0.6 : anchor.y;
+    }
+
     function positionGroundMesh(mesh, config, isSky) {
       const anchor = computeWorldAnchor();
-      switch (config.geometry) {
+      switch (params.world.geometry) {
         case 'Hemisphere':
           // Floor: bowl opening upward (flip the dome). Sky: dome rising
           // from ground level, camera-friendly BackSide handles the inside view.
@@ -758,10 +768,73 @@
         case 'Radial':
         default:
           mesh.rotation.set(-Math.PI / 2, 0, 0);
-          // Floor: flat at the anchor. Sky: flat "ceiling" scaled with size.
-          mesh.position.set(anchor.x, isSky ? anchor.y + config.size * 0.6 : anchor.y, anchor.z);
+          mesh.position.set(anchor.x, flatSurfaceY(anchor, config, isSky), anchor.z);
           break;
       }
+    }
+
+    // Radial + Grid gets its own exact geometry instead of a texture: a
+    // disc's default UVs are a planar (not polar) projection, so tiling a
+    // square-tile texture over it produces a warped, off-center pattern —
+    // it conflicts with the shape instead of describing it. Building actual
+    // concentric ring/spoke lines is exact at any radius and trivially
+    // "centered on the origin" and "spoke aligned with Z" by construction:
+    // in the (x, z) = (cos, sin) plane, angle 0 is +X and angle PI/2 is +Z,
+    // so starting the spoke sweep at PI/2 puts the first spoke on the Z axis.
+    function buildRadialGridGroup(config) {
+      const ringCount = Math.max(1, Math.round(config.gridFrequency));
+      const spokeCount = Math.max(1, Math.round(config.gridFrequency));
+      const maxRadius = config.size / 2;
+      const segments = 64;
+      const material = new THREE.LineBasicMaterial({
+        color: config.color,
+        linewidth: config.gridSize,
+        transparent: true,
+        opacity: 0.7
+      });
+
+      const group = new THREE.Group();
+
+      // Concentric rings, evenly spaced by radius
+      for (let i = 1; i <= ringCount; i++) {
+        const r = (i / ringCount) * maxRadius;
+        const points = [];
+        for (let s = 0; s <= segments; s++) {
+          const a = (s / segments) * Math.PI * 2;
+          points.push(new THREE.Vector3(r * Math.cos(a), 0, r * Math.sin(a)));
+        }
+        group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
+      }
+
+      // Radial spokes from center to edge, evenly spaced by angle, first one on +Z
+      for (let j = 0; j < spokeCount; j++) {
+        const a = Math.PI / 2 + j * ((Math.PI * 2) / spokeCount);
+        const points = [
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(maxRadius * Math.cos(a), 0, maxRadius * Math.sin(a))
+        ];
+        group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
+      }
+
+      return group;
+    }
+
+    function positionRadialGridGroup(group, config, isSky) {
+      const anchor = computeWorldAnchor();
+      group.position.set(anchor.x, flatSurfaceY(anchor, config, isSky), anchor.z);
+    }
+
+    let floorRadialGrid = null;
+    let skyRadialGrid = null;
+
+    function disposeRadialGrid(kind) {
+      const group = kind === 'sky' ? skyRadialGrid : floorRadialGrid;
+      if (!group) return;
+      scene.remove(group);
+      const sharedMaterial = group.children[0] && group.children[0].material;
+      group.children.forEach(line => line.geometry.dispose());
+      if (sharedMaterial) sharedMaterial.dispose();
+      if (kind === 'sky') skyRadialGrid = null; else floorRadialGrid = null;
     }
 
     function rebuildGroundMesh(kind) {
@@ -769,6 +842,7 @@
       const config = groundConfig(kind);
       const old = isSky ? skyMesh : floorMesh;
       const persistentTex = isSky ? skyImageTexture : floorImageTexture;
+      const isRadialGrid = params.world.geometry === 'Radial' && config.surface === 'Grid';
 
       if (old) {
         scene.remove(old);
@@ -776,17 +850,29 @@
         if (old.material.map && old.material.map !== persistentTex) old.material.map.dispose();
         old.material.dispose();
       }
+      disposeRadialGrid(kind);
 
-      const geometry = buildGroundGeometry(config.geometry, config.size);
-      const material = buildSurfaceMaterial(config, isSky, persistentTex);
+      const geometry = buildGroundGeometry(params.world.geometry, config.size);
+      // Radial's own Grid is drawn as line geometry instead (see above), so
+      // the disc itself just goes invisible rather than wearing a wasted texture.
+      const material = isRadialGrid
+        ? new THREE.MeshBasicMaterial({ visible: false })
+        : buildSurfaceMaterial(config, isSky, persistentTex);
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.visible = config.surface !== 'Off';
+      mesh.visible = config.surface !== 'Off' && !isRadialGrid;
       mesh.receiveShadow = !isSky;
       mesh.castShadow = false;
       positionGroundMesh(mesh, config, isSky);
 
       scene.add(mesh);
       if (isSky) skyMesh = mesh; else floorMesh = mesh;
+
+      if (isRadialGrid) {
+        const group = buildRadialGridGroup(config);
+        positionRadialGridGroup(group, config, isSky);
+        scene.add(group);
+        if (isSky) skyRadialGrid = group; else floorRadialGrid = group;
+      }
     }
 
     // Cheap re-layout for when only the construct's height changed (dragging
@@ -795,6 +881,8 @@
     function repositionGroundMeshes() {
       if (floorMesh) positionGroundMesh(floorMesh, params.floor, false);
       if (skyMesh) positionGroundMesh(skyMesh, params.sky, true);
+      if (floorRadialGrid) positionRadialGridGroup(floorRadialGrid, params.floor, false);
+      if (skyRadialGrid) positionRadialGridGroup(skyRadialGrid, params.sky, true);
     }
 
     function loadGroundImage(kind, file) {
@@ -1936,28 +2024,31 @@
         repositionGroundMeshes();
       }
     });
+    // Floor and sky always share one shape — there's deliberately no
+    // separate Floor/Sky geometry control, so the two can't drift apart.
+    createSelectPanel(worldTab, {
+      code: 'WLD-05',
+      title: 'World Geometry',
+      options: ['Square', 'Radial', 'Hemisphere', 'Cube'],
+      value: params.world.geometry,
+      onChange: v => {
+        params.world.geometry = v;
+        rebuildGroundMesh('floor');
+        rebuildGroundMesh('sky');
+      }
+    });
 
     // Floor & Sky. Identical option shape, so one builder wires up both,
     // just pointed at 'floor' vs 'sky' and their own code prefix.
     function buildGroundPanels(tab, kind, prefix, label) {
       const config = groundConfig(kind);
 
-      createSelectPanel(tab, {
-        code: prefix + '-01',
-        title: label + ' Geometry',
-        options: ['Square', 'Radial', 'Hemisphere', 'Cube'],
-        value: config.geometry,
-        onChange: v => {
-          config.geometry = v;
-          rebuildGroundMesh(kind);
-        }
-      });
-      createSliderPanel(tab, { code: prefix + '-02', title: label + ' Size', unit: 'u', min: 20, max: 600, step: 10, value: config.size, format: v => Math.round(v), onInput: v => {
+      createSliderPanel(tab, { code: prefix + '-01', title: label + ' Size', unit: 'u', min: 20, max: 600, step: 10, value: config.size, format: v => Math.round(v), onInput: v => {
         config.size = v;
         rebuildGroundMesh(kind);
       }});
       createSelectPanel(tab, {
-        code: prefix + '-03',
+        code: prefix + '-02',
         title: label + ' Surface',
         options: ['Off', 'Color', 'Grid', 'Image'],
         value: config.surface,
@@ -1971,7 +2062,7 @@
         }
       });
       const colorPanel = createColorPanel(tab, {
-        code: prefix + '-04', title: label + ' Color', value: config.color,
+        code: prefix + '-03', title: label + ' Color', value: config.color,
         visible: config.surface === 'Color' || config.surface === 'Grid',
         onChange: c => {
           config.color = c;
@@ -1979,7 +2070,7 @@
         }
       });
       const gridFreqPanel = createSliderPanel(tab, {
-        code: prefix + '-05', title: 'Grid Frequency', unit: '×', min: 2, max: 40, step: 1, value: config.gridFrequency, format: v => Math.round(v),
+        code: prefix + '-04', title: 'Grid Frequency', unit: '×', min: 2, max: 40, step: 1, value: config.gridFrequency, format: v => Math.round(v),
         visible: config.surface === 'Grid', sub: true,
         onInput: v => {
           config.gridFrequency = Math.round(v);
@@ -1987,7 +2078,7 @@
         }
       });
       const gridSizePanel = createSliderPanel(tab, {
-        code: prefix + '-06', title: 'Grid Line Size', unit: 'px', min: 1, max: 12, step: 1, value: config.gridSize, format: v => Math.round(v),
+        code: prefix + '-05', title: 'Grid Line Size', unit: 'px', min: 1, max: 12, step: 1, value: config.gridSize, format: v => Math.round(v),
         visible: config.surface === 'Grid', sub: true,
         onInput: v => {
           config.gridSize = Math.round(v);
@@ -1995,7 +2086,7 @@
         }
       });
       const imagePanel = createFilePanel(tab, {
-        code: prefix + '-07',
+        code: prefix + '-06',
         title: label + ' Image',
         accept: 'image/*',
         visible: config.surface === 'Image',
