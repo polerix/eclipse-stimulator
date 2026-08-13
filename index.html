@@ -22,6 +22,7 @@
       --lcars-mars: #ff6666;
       --lcars-ice: #66ccff;
       --lcars-salmon: #ff9977;
+      --lcars-plum: #cc6699;
       --lcars-alert: #33ffff;
     }
     body, html {
@@ -459,6 +460,120 @@
       border-radius: 8px;
       cursor: pointer;
     }
+
+    .tool-text-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .tool-text-input {
+      flex: 1;
+      min-width: 0;
+      padding: 6px 10px;
+      font-family: inherit;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+    }
+
+    .tool-text-input::placeholder { color: rgba(255, 255, 255, 0.35); }
+
+    .tool-text-button {
+      padding: 6px 14px;
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #000;
+      background: var(--accent, #ff9c00);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .tool-text-button:hover { filter: brightness(1.15); }
+
+    .tool-textarea {
+      box-sizing: border-box;
+      width: 100%;
+      height: 60px;
+      margin-top: 6px;
+      padding: 8px;
+      font-family: monospace;
+      font-size: 10px;
+      color: #ccc;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      resize: vertical;
+    }
+
+    .tool-program-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 6px;
+    }
+
+    .tool-program-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+    }
+
+    .tool-program-name {
+      flex: 1;
+      overflow: hidden;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+      color: #fff;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tool-program-load {
+      padding: 4px 10px;
+      font-family: inherit;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #000;
+      background: var(--accent, #ff9c00);
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .tool-program-delete {
+      width: 20px;
+      height: 20px;
+      font-size: 10px;
+      line-height: 1;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.12);
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .tool-program-delete:hover { background: rgba(255, 255, 255, 0.25); }
+
+    .tool-program-empty {
+      padding: 6px 4px;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      color: rgba(255, 255, 255, 0.4);
+      text-transform: uppercase;
+    }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -584,6 +699,103 @@
       }
     };
 
+    // --- Memory: Save/Load Programs (persistence) ---
+    // `params` is fully JSON-safe — plain values, arrays, nested plain
+    // objects, no functions or circular refs — so a snapshot is just a
+    // stringify. Loading works by writing the chosen snapshot into a
+    // "pending load" slot and reloading the page: the very first thing this
+    // script does on the next run (right here, before any 3D object or HUD
+    // control is built) is merge that snapshot onto the defaults above. That
+    // means every panel's *initial* value already reflects the loaded
+    // program — no separate "refresh every control" step needed anywhere.
+    // Uploaded custom runner models and floor/sky images aren't captured
+    // (their raw file bytes never touch `params`), so loading a program that
+    // used one falls back to that shape/surface's normal placeholder, same
+    // as picking it fresh without a file — never a crash, just a re-upload prompt.
+    const MEMORY_KEY = 'eclipseStimulator.savedPrograms';
+    const PENDING_LOAD_KEY = 'eclipseStimulator.pendingLoad';
+
+    function safeLocalStorageGet(key) {
+      try { return localStorage.getItem(key); } catch (e) { return null; }
+    }
+    function safeLocalStorageSet(key, value) {
+      try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
+    }
+    function safeLocalStorageRemove(key) {
+      try { localStorage.removeItem(key); } catch (e) { /* ignore */ }
+    }
+
+    function deepMerge(target, source) {
+      Object.keys(source).forEach(key => {
+        const value = source[key];
+        if (Array.isArray(value)) {
+          target[key] = value;
+        } else if (value && typeof value === 'object') {
+          if (!target[key] || typeof target[key] !== 'object') target[key] = {};
+          deepMerge(target[key], value);
+        } else {
+          target[key] = value;
+        }
+      });
+      return target;
+    }
+
+    (function applyPendingLoad() {
+      let pending = null;
+      try {
+        pending = JSON.parse(safeLocalStorageGet(PENDING_LOAD_KEY) || 'null');
+      } catch (e) {
+        pending = null;
+      }
+      if (!pending) return;
+      safeLocalStorageRemove(PENDING_LOAD_KEY);
+      deepMerge(params, pending);
+    })();
+
+    function snapshotParams() {
+      return JSON.parse(JSON.stringify(params));
+    }
+
+    function listPrograms() {
+      const raw = safeLocalStorageGet(MEMORY_KEY);
+      if (!raw) return {};
+      try { return JSON.parse(raw); } catch (e) { return {}; }
+    }
+
+    function saveProgram(name) {
+      const programs = listPrograms();
+      programs[name] = snapshotParams();
+      return safeLocalStorageSet(MEMORY_KEY, JSON.stringify(programs));
+    }
+
+    function deleteProgram(name) {
+      const programs = listPrograms();
+      delete programs[name];
+      return safeLocalStorageSet(MEMORY_KEY, JSON.stringify(programs));
+    }
+
+    function loadProgram(name) {
+      const programs = listPrograms();
+      if (!programs[name]) return false;
+      if (!safeLocalStorageSet(PENDING_LOAD_KEY, JSON.stringify(programs[name]))) return false;
+      location.reload();
+      return true;
+    }
+
+    // Base64 JSON, safe to paste into a text field. unescape/encodeURIComponent
+    // is the standard trick for letting btoa/atob round-trip UTF-8, not just Latin-1.
+    function exportProgramCode(snapshot) {
+      return btoa(unescape(encodeURIComponent(JSON.stringify(snapshot))));
+    }
+
+    function importProgramFromCode(code) {
+      try {
+        return JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
+      } catch (e) {
+        return null;
+      }
+    }
+
     // --- LCARS Design Tokens ---
     // One named palette, reused everywhere a "which category is this"
     // color decision gets made — the tab accents, the selection highlight,
@@ -599,6 +811,7 @@
       mars: '#ff6666',          // Runner tab + path endpoints
       ice: '#66ccff',           // Camera tab
       salmon: '#ff9977',        // World tab (floor & sky)
+      plum: '#cc6699',          // Memory tab (save/load)
       alert: '#33ffff'          // Selection highlight + path preview line
     };
 
@@ -1078,7 +1291,7 @@
       attachCustomRunnerObject(freshObject3D);
     }
 
-    function applyRunnerShape(shape) {
+    function buildRunnerShape(shape) {
       if (shape === 'Rectifier') buildRectifierRunner();
       else if (shape === 'Sphere') buildSphereRunner();
       else if (shape === 'Cube') buildCubeRunner();
@@ -1086,10 +1299,19 @@
         if (lastCustomObject) attachCustomRunnerObject(lastCustomObject.clone(true));
         else buildCubeRunner(); // placeholder until a model is uploaded
       }
+    }
+
+    function applyRunnerShape(shape) {
+      buildRunnerShape(shape);
       clearSelection();
     }
 
-    buildRectifierRunner();
+    // Respects a loaded program's shape instead of always starting as
+    // Rectifier — buildRunnerShape() (not applyRunnerShape()) because
+    // clearSelection() reaches into selection/HUD state that isn't
+    // constructed yet this early in the script, and there's nothing
+    // selected at startup to clear anyway.
+    buildRunnerShape(params.runner.shape);
 
     // STL / OBJ loading for the "Custom" runner shape
     const stlLoader = new THREE.STLLoader();
@@ -1131,7 +1353,7 @@
     controls.minDistance = 4;
     controls.maxDistance = 260;
     controls.target.set(0, 0, 0);
-    controls.enabled = false;
+    controls.enabled = params.camera.trackingMode === 'Manual Control'; // respects a loaded program
     controls.update();
 
     // --- Entity Selection (double-click / double-tap) ---
@@ -1691,7 +1913,8 @@
       { id: 'surface', label: 'Surface', accent: LCARS_PALETTE.gold },
       { id: 'runner', label: 'Runner', accent: LCARS_PALETTE.mars },
       { id: 'camera', label: 'Camera', accent: LCARS_PALETTE.ice },
-      { id: 'world', label: 'World', accent: LCARS_PALETTE.salmon }
+      { id: 'world', label: 'World', accent: LCARS_PALETTE.salmon },
+      { id: 'memory', label: 'Memory', accent: LCARS_PALETTE.plum }
     ];
 
     const tabPanelEls = {};
@@ -1733,6 +1956,7 @@
     const runnerTab = tabPanelEls.runner;
     const cameraTab = tabPanelEls.camera;
     const worldTab = tabPanelEls.world;
+    const memoryTab = tabPanelEls.memory;
 
     // 1. Central Source — the construct's core, everything else is built around it
     createColorPanel(sourceTab, { code: 'SRC-01', title: 'Source Color', value: params.source.color, onChange: c => {
@@ -2096,6 +2320,168 @@
 
     buildGroundPanels(worldTab, 'floor', 'FLR', 'Floor');
     buildGroundPanels(worldTab, 'sky', 'SKY', 'Sky');
+
+    // 8. Memory — "Computer, save current program." Local named saves, plus
+    // a portable export/import code for taking a program to another browser.
+    function createSaveProgramPanel(container, onSave) {
+      const panel = el('div', 'lcars-panel');
+      panel.appendChild(panelHeader('MEM-01', 'Save Current Program'));
+
+      const statusEl = el('div', 'tool-value tool-value--text', 'ENTER A NAME');
+      panel.appendChild(statusEl);
+
+      const row = el('div', 'tool-text-row');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'tool-text-input';
+      input.placeholder = 'Program name';
+      input.maxLength = 40;
+      input.setAttribute('aria-label', 'Program name to save');
+      row.appendChild(input);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tool-text-button';
+      btn.textContent = 'Save';
+      const submit = () => {
+        const name = input.value.trim();
+        if (!name) { statusEl.textContent = 'ENTER A NAME'; return; }
+        onSave(name, statusEl, () => { input.value = ''; });
+      };
+      btn.addEventListener('click', submit);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+      row.appendChild(btn);
+
+      panel.appendChild(row);
+      container.appendChild(panel);
+    }
+
+    function createProgramListPanel(container) {
+      const panel = el('div', 'lcars-panel');
+      panel.appendChild(panelHeader('MEM-02', 'Stored Programs'));
+
+      const list = el('div', 'tool-program-list');
+      panel.appendChild(list);
+      container.appendChild(panel);
+
+      function refresh() {
+        const programs = listPrograms();
+        const names = Object.keys(programs).sort();
+        list.innerHTML = '';
+        if (names.length === 0) {
+          list.appendChild(el('div', 'tool-program-empty', 'No programs stored'));
+          return;
+        }
+        names.forEach(name => {
+          const row = el('div', 'tool-program-row');
+          row.appendChild(el('span', 'tool-program-name', name));
+
+          const loadBtn = document.createElement('button');
+          loadBtn.type = 'button';
+          loadBtn.className = 'tool-program-load';
+          loadBtn.textContent = 'Load';
+          loadBtn.setAttribute('aria-label', 'Load saved program ' + name);
+          loadBtn.addEventListener('click', () => loadProgram(name));
+          row.appendChild(loadBtn);
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'tool-program-delete';
+          delBtn.textContent = '✕';
+          delBtn.setAttribute('aria-label', 'Delete saved program ' + name);
+          delBtn.addEventListener('click', () => {
+            deleteProgram(name);
+            refresh();
+          });
+          row.appendChild(delBtn);
+
+          list.appendChild(row);
+        });
+      }
+
+      refresh();
+      return { refresh };
+    }
+
+    function createExportPanel(container) {
+      const panel = el('div', 'lcars-panel');
+      panel.appendChild(panelHeader('MEM-03', 'Export Code'));
+
+      const statusEl = el('div', 'tool-value tool-value--text', 'Generate a code to share');
+      panel.appendChild(statusEl);
+
+      const textarea = document.createElement('textarea');
+      textarea.className = 'tool-textarea';
+      textarea.readOnly = true;
+      textarea.placeholder = 'Press Generate to create a shareable code…';
+      textarea.setAttribute('aria-label', 'Exported program code');
+      panel.appendChild(textarea);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tool-text-button';
+      btn.textContent = 'Generate + Copy';
+      btn.addEventListener('click', () => {
+        const code = exportProgramCode(snapshotParams());
+        textarea.value = code;
+        textarea.select();
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(code)
+            .then(() => { statusEl.textContent = 'Copied to clipboard'; })
+            .catch(() => { statusEl.textContent = 'Code ready — copy manually'; });
+        } else {
+          statusEl.textContent = 'Code ready — copy manually';
+        }
+      });
+      panel.appendChild(btn);
+
+      container.appendChild(panel);
+    }
+
+    function createImportPanel(container) {
+      const panel = el('div', 'lcars-panel');
+      panel.appendChild(panelHeader('MEM-04', 'Import Code'));
+
+      const statusEl = el('div', 'tool-value tool-value--text', 'Paste a code below');
+      panel.appendChild(statusEl);
+
+      const textarea = document.createElement('textarea');
+      textarea.className = 'tool-textarea';
+      textarea.placeholder = 'Paste an exported code here…';
+      textarea.setAttribute('aria-label', 'Program code to import');
+      panel.appendChild(textarea);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tool-text-button';
+      btn.textContent = 'Import + Reload';
+      btn.addEventListener('click', () => {
+        const snapshot = importProgramFromCode(textarea.value);
+        if (!snapshot) { statusEl.textContent = 'Invalid code'; return; }
+        if (!safeLocalStorageSet(PENDING_LOAD_KEY, JSON.stringify(snapshot))) {
+          statusEl.textContent = 'Storage unavailable';
+          return;
+        }
+        location.reload();
+      });
+      panel.appendChild(btn);
+
+      container.appendChild(panel);
+    }
+
+    createSaveProgramPanel(memoryTab, (name, statusEl, clearInput) => {
+      const existed = Object.prototype.hasOwnProperty.call(listPrograms(), name);
+      if (saveProgram(name)) {
+        clearInput();
+        programListPanel.refresh();
+        statusEl.textContent = (existed ? 'Overwritten: ' : 'Saved: ') + name;
+      } else {
+        statusEl.textContent = 'Storage unavailable';
+      }
+    });
+    const programListPanel = createProgramListPanel(memoryTab);
+    createExportPanel(memoryTab);
+    createImportPanel(memoryTab);
 
     // --- Animation Loop ---
     const clock = new THREE.Clock();
