@@ -93,10 +93,39 @@
     }
 
     .lcars-hud__bar-code {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
       font-size: 10px;
       font-weight: 600;
       letter-spacing: 1px;
-      opacity: 0.6;
+      opacity: 0.7;
+    }
+
+    .lcars-hud__bar-code-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .lcars-hud__bar-stardate {
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* A quiet "system is alive" pulse — purely decorative */
+    .lcars-hud__pulse {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #000;
+      animation: lcars-pulse 2.4s ease-in-out infinite;
+    }
+
+    @keyframes lcars-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
     }
 
     .lcars-hud__cap {
@@ -105,11 +134,28 @@
       border-radius: 2px 2px 2px 999px;
     }
 
-    /* Tracks the active tab's color — a live "you are here" wayfinding cue */
+    /* Tracks the active tab's color — a live "you are here" wayfinding cue.
+       Also carries a few flavor readouts: purely cosmetic telemetry that
+       reads as "living system" without meaning anything or asking for
+       any attention — never focusable, never announced to assistive tech. */
     .lcars-hud__spine {
       grid-area: spine;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-evenly;
+      padding: 12px 0;
       background: var(--spine-accent, var(--lcars-butterscotch));
       transition: background 0.2s;
+    }
+
+    .lcars-hud__tick {
+      writing-mode: vertical-rl;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: rgba(0, 0, 0, 0.5);
+      font-variant-numeric: tabular-nums;
     }
 
     .lcars-hud__body {
@@ -426,7 +472,13 @@
   <div class="lcars-hud" id="lcars-hud">
     <div class="lcars-hud__bar">
       <span class="lcars-hud__bar-label">Construct Controls</span>
-      <span class="lcars-hud__bar-code">HUD-01</span>
+      <span class="lcars-hud__bar-code" aria-hidden="true">
+        <span class="lcars-hud__bar-code-row">
+          <span class="lcars-hud__pulse"></span>
+          HUD-01
+        </span>
+        <span class="lcars-hud__bar-stardate" id="lcars-stardate">SD 47000.00</span>
+      </span>
     </div>
     <div class="lcars-hud__cap"></div>
     <div class="lcars-hud__body">
@@ -438,7 +490,12 @@
       <nav class="lcars-menu" id="lcars-menu"></nav>
       <div class="lcars-tabpanels" id="lcars-tabpanels"></div>
     </div>
-    <div class="lcars-hud__spine"></div>
+    <div class="lcars-hud__spine" aria-hidden="true">
+      <span class="lcars-hud__tick"></span>
+      <span class="lcars-hud__tick"></span>
+      <span class="lcars-hud__tick"></span>
+      <span class="lcars-hud__tick"></span>
+    </div>
   </div>
 
   <script>
@@ -889,6 +946,50 @@
 
     selectionClearBtn.addEventListener('click', clearSelection);
 
+    // --- Living-system telemetry (purely decorative, aria-hidden) ---
+    // A stardate ticker and a few flavor readouts in the spine — they don't
+    // mean anything and never take focus or a pointer event; they exist so
+    // the HUD reads as a system that's alive, not a static prop. Only runs
+    // while the HUD is actually open, so there's nothing to update (or for
+    // a screen reader to skip past) while it's summoned away.
+    const stardateEl = document.getElementById('lcars-stardate');
+    const spineTicks = document.querySelectorAll('.lcars-hud__tick');
+    let telemetryTimer = null;
+
+    function computeStardate() {
+      const now = new Date();
+      const startOfYear = new Date(now.getFullYear(), 0, 0);
+      const dayOfYear = Math.floor((now - startOfYear) / 86400000);
+      const secondsToday = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+      // Cosmetic offset only, not canon math: a slow-moving "epoch" plus a
+      // seconds-based fraction that visibly ticks every second, so the
+      // readout actually reads as live at the 1s update cadence below.
+      const whole = 47000 + (now.getFullYear() - 2024) * 1000 + Math.floor(dayOfYear * 2.7);
+      const frac = (secondsToday % 100).toString().padStart(2, '0');
+      return 'SD ' + whole + '.' + frac;
+    }
+
+    function randomTick() {
+      return Math.floor(Math.random() * 0xfff).toString(16).toUpperCase().padStart(3, '0');
+    }
+
+    function startTelemetry() {
+      if (telemetryTimer) return;
+      if (stardateEl) stardateEl.textContent = computeStardate();
+      spineTicks.forEach(t => { t.textContent = randomTick(); });
+      telemetryTimer = setInterval(() => {
+        if (stardateEl) stardateEl.textContent = computeStardate();
+        // Stagger which tick updates so they don't all flicker in lockstep
+        const i = Math.floor(Math.random() * spineTicks.length);
+        if (spineTicks[i]) spineTicks[i].textContent = randomTick();
+      }, 1000);
+    }
+
+    function stopTelemetry() {
+      clearInterval(telemetryTimer);
+      telemetryTimer = null;
+    }
+
     // --- HUD Open/Close (double-tap/double-click to summon or dismiss) ---
     const hudEl = document.getElementById('lcars-hud');
     const hudHintEl = document.getElementById('lcars-hud-hint');
@@ -900,6 +1001,7 @@
       hudEl.classList.add('is-open');
       hudHintEl.hidden = true;
       updatePathMarkersVisibility();
+      startTelemetry();
     }
 
     function closeMenu() {
@@ -908,6 +1010,7 @@
       hudEl.classList.remove('is-open');
       hudHintEl.hidden = false;
       updatePathMarkersVisibility();
+      stopTelemetry();
     }
 
     // Unified double-click (mouse) / double-tap (touch) detection via Pointer
