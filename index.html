@@ -557,9 +557,14 @@
         distance: 12,
         height: 3.5
       },
-      // Floor & Sky share this exact option shape (World tab). Defaults
+      // World: the shared reference frame Floor and Sky are both anchored
+      // to, plus Floor & Sky themselves (identical option shape). Defaults
       // reproduce the original hardcoded floor exactly, and default the
       // sky to invisible, so the scene looks unchanged until touched.
+      world: {
+        alignment: 'Cube', // 'Source' | 'Cube' | 'XYZ'
+        offset: { x: 0, y: 0, z: 0 } // used only when alignment is 'XYZ'
+      },
       floor: {
         geometry: 'Square',   // 'Square' | 'Radial' | 'Hemisphere' | 'Cube'
         size: 300,
@@ -670,6 +675,23 @@
       return kind === 'sky' ? params.sky : params.floor;
     }
 
+    // Where Floor and Sky are both anchored, per params.world.alignment:
+    //   Source — the fixed point everything else is built around (origin)
+    //   Cube   — derived from the orbiting cubes' current height (default,
+    //            matches the construct's original hardcoded floor)
+    //   XYZ    — fully manual, no dependency on any other entity
+    function computeWorldAnchor() {
+      switch (params.world.alignment) {
+        case 'Source':
+          return { x: 0, y: 0, z: 0 };
+        case 'XYZ':
+          return { x: params.world.offset.x, y: params.world.offset.y, z: params.world.offset.z };
+        case 'Cube':
+        default:
+          return { x: 0, y: -params.cube.sizeY / 2, z: 0 };
+      }
+    }
+
     function buildGroundGeometry(type, size) {
       switch (type) {
         case 'Radial': return new THREE.CircleGeometry(size / 2, 64);
@@ -717,27 +739,27 @@
     }
 
     function positionGroundMesh(mesh, config, isSky) {
-      const floorY = -params.cube.sizeY / 2;
+      const anchor = computeWorldAnchor();
       switch (config.geometry) {
         case 'Hemisphere':
           // Floor: bowl opening upward (flip the dome). Sky: dome rising
           // from ground level, camera-friendly BackSide handles the inside view.
           mesh.rotation.x = isSky ? 0 : Math.PI;
           mesh.rotation.z = 0;
-          mesh.position.set(0, floorY, 0);
+          mesh.position.set(anchor.x, anchor.y, anchor.z);
           break;
         case 'Cube':
           mesh.rotation.set(0, 0, 0);
-          // Floor: top face at ground level (a solid platform underneath).
-          // Sky: box centered above, floor to roof, enclosing the scene.
-          mesh.position.set(0, isSky ? floorY + config.size / 2 : floorY - config.size / 2, 0);
+          // Floor: top face at the anchor (a solid platform underneath).
+          // Sky: box centered above, anchor to roof, enclosing the scene.
+          mesh.position.set(anchor.x, isSky ? anchor.y + config.size / 2 : anchor.y - config.size / 2, anchor.z);
           break;
         case 'Square':
         case 'Radial':
         default:
           mesh.rotation.set(-Math.PI / 2, 0, 0);
-          // Floor: flat at ground level. Sky: flat "ceiling" scaled with size.
-          mesh.position.set(0, isSky ? floorY + config.size * 0.6 : floorY, 0);
+          // Floor: flat at the anchor. Sky: flat "ceiling" scaled with size.
+          mesh.position.set(anchor.x, isSky ? anchor.y + config.size * 0.6 : anchor.y, anchor.z);
           break;
       }
     }
@@ -1868,8 +1890,55 @@
       params.camera.height = v;
     }});
 
-    // 7. World — Floor & Sky. Identical option shape, so one builder wires
-    // up both, just pointed at 'floor' vs 'sky' and their own code prefix.
+    // 7. World — the reference frame first (Alignment), then the two
+    // things anchored to it (Floor, Sky): establish where "here" is
+    // before configuring what sits there.
+    //
+    // Alignment options are ordered by degrees of freedom, least to
+    // most: Source is a fixed point (zero freedom — it's always the
+    // origin), Cube is a derived point (one freedom — it moves only
+    // as the cube's own height changes), XYZ is fully manual (three
+    // free coordinates, no dependency on any other entity).
+    createSelectPanel(worldTab, {
+      code: 'WLD-01',
+      title: 'World Alignment',
+      options: ['Source', 'Cube', 'XYZ'],
+      value: params.world.alignment,
+      onChange: v => {
+        params.world.alignment = v;
+        repositionGroundMeshes();
+        worldOffsetXPanel.setVisible(v === 'XYZ');
+        worldOffsetYPanel.setVisible(v === 'XYZ');
+        worldOffsetZPanel.setVisible(v === 'XYZ');
+      }
+    });
+    const worldOffsetXPanel = createSliderPanel(worldTab, {
+      code: 'WLD-02', title: 'World Offset X', unit: 'u', min: -150, max: 150, step: 1, value: params.world.offset.x, format: v => Math.round(v),
+      visible: params.world.alignment === 'XYZ', sub: true,
+      onInput: v => {
+        params.world.offset.x = v;
+        repositionGroundMeshes();
+      }
+    });
+    const worldOffsetYPanel = createSliderPanel(worldTab, {
+      code: 'WLD-03', title: 'World Offset Y', unit: 'u', min: -50, max: 50, step: 1, value: params.world.offset.y, format: v => Math.round(v),
+      visible: params.world.alignment === 'XYZ', sub: true,
+      onInput: v => {
+        params.world.offset.y = v;
+        repositionGroundMeshes();
+      }
+    });
+    const worldOffsetZPanel = createSliderPanel(worldTab, {
+      code: 'WLD-04', title: 'World Offset Z', unit: 'u', min: -150, max: 150, step: 1, value: params.world.offset.z, format: v => Math.round(v),
+      visible: params.world.alignment === 'XYZ', sub: true,
+      onInput: v => {
+        params.world.offset.z = v;
+        repositionGroundMeshes();
+      }
+    });
+
+    // Floor & Sky. Identical option shape, so one builder wires up both,
+    // just pointed at 'floor' vs 'sky' and their own code prefix.
     function buildGroundPanels(tab, kind, prefix, label) {
       const config = groundConfig(kind);
 
