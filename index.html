@@ -1039,17 +1039,32 @@
       // Image floor never actually displayed a shadow falling on it. Only
       // the default flat-Color surface happened to use a light-responsive
       // material before this.
+      let material;
       if (config.surface === 'Grid') {
         const tex = createGridTexture(config.color, config.gridSize);
         tex.repeat.set(config.gridFrequency, config.gridFrequency);
-        return new THREE.MeshLambertMaterial({ map: tex, transparent: true, side });
+        material = new THREE.MeshLambertMaterial({ map: tex, transparent: true, side });
+      } else if (config.surface === 'Image' && imageTexture) {
+        material = new THREE.MeshLambertMaterial({ map: imageTexture, side });
+      } else {
+        // 'Color', or 'Image' with nothing uploaded yet — same flat-color
+        // fallback used by the runner's Custom shape before a model loads
+        material = new THREE.MeshLambertMaterial({ color: config.color, side });
       }
-      if (config.surface === 'Image' && imageTexture) {
-        return new THREE.MeshLambertMaterial({ map: imageTexture, side });
+      // Hemisphere and Cube world geometries put the sky's surface exactly
+      // coincident with the floor's where they meet (the dome rims, or the
+      // box faces, land on the same plane) — a depth-buffer tie that
+      // flickers (z-fights) regardless of surface style, since the
+      // conflict is geometric, not material. A polygon-offset depth bias on
+      // the sky — instead of physically moving either mesh — resolves the
+      // tie with no visible seam or gap: the two surfaces stay exactly
+      // where they're placed, but the GPU now has a tiebreaker.
+      if (isSky) {
+        material.polygonOffset = true;
+        material.polygonOffsetFactor = 1;
+        material.polygonOffsetUnits = 1;
       }
-      // 'Color', or 'Image' with nothing uploaded yet — same flat-color
-      // fallback used by the runner's Custom shape before a model loads
-      return new THREE.MeshLambertMaterial({ color: config.color, side });
+      return material;
     }
 
     // Y height for a flat (Square/Radial) surface, relative to the world
@@ -1059,42 +1074,26 @@
       return isSky ? anchor.y + config.size * 0.6 : anchor.y;
     }
 
-    // A tiny, size-proportional vertical clearance so the sky's surface
-    // never sits exactly coincident with the floor's. Square/Radial already
-    // separate the two by a wide margin (flatSurfaceY above), but Hemisphere
-    // and Cube world geometries were putting both surfaces on the *exact*
-    // same plane where they meet — the sky dome's rim landed on the same
-    // height as the floor bowl's rim, and the sky box's underside landed on
-    // the same height as the floor box's top face — so they z-fought
-    // (flickered) there no matter which surface style (Color/Grid/Image)
-    // was applied, since the conflict is purely geometric, not material.
-    function groundClearance(config) {
-      return Math.max(0.5, config.size * 0.01);
-    }
-
     function positionGroundMesh(mesh, config, isSky) {
       const anchor = computeWorldAnchor();
       switch (params.world.geometry) {
         case 'Hemisphere':
           // Floor: bowl opening upward (flip the dome). Sky: dome rising
           // from ground level, camera-friendly BackSide handles the inside
-          // view — nudged up by the clearance so its base ring clears the
-          // floor bowl's opening instead of coinciding with it.
+          // view. Its rim lands exactly on the floor bowl's rim by design —
+          // see the polygonOffset note in buildSurfaceMaterial for how that
+          // coincidence is kept from z-fighting without a visible gap.
           mesh.rotation.x = isSky ? 0 : Math.PI;
           mesh.rotation.z = 0;
-          mesh.position.set(anchor.x, anchor.y + (isSky ? groundClearance(config) : 0), anchor.z);
+          mesh.position.set(anchor.x, anchor.y, anchor.z);
           break;
         case 'Cube':
           mesh.rotation.set(0, 0, 0);
           // Floor: top face at the anchor (a solid platform underneath).
           // Sky: box centered above, anchor to roof, enclosing the scene —
-          // its underside nudged up by the clearance so it doesn't share
-          // the floor's top face.
-          mesh.position.set(
-            anchor.x,
-            isSky ? anchor.y + config.size / 2 + groundClearance(config) : anchor.y - config.size / 2,
-            anchor.z
-          );
+          // its underside lands exactly on the floor's top face by design;
+          // see the polygonOffset note in buildSurfaceMaterial.
+          mesh.position.set(anchor.x, isSky ? anchor.y + config.size / 2 : anchor.y - config.size / 2, anchor.z);
           break;
         case 'Square':
         case 'Radial':
