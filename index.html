@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>8-Cube Occlusion Construct</title>
+  <title>8-Orbital Occlusion Construct</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Antonio:wght@400;600;700&display=swap" rel="stylesheet">
@@ -722,8 +722,13 @@
         shape: 'Rectifier',
         size: 0.8,
         path: {
-          // World-space waypoints the runner travels between. Always at
-          // least 2 (start, end); "Path Nodes" inserts more in between.
+          // Waypoints the runner travels between, with Y expressed as
+          // height *above the current ground plane* rather than an
+          // absolute world Y — so Y: 0 always means "grounded, at the
+          // orbitals' bottom edge," and the whole path automatically
+          // re-lands if World Alignment or the orbitals' own height
+          // changes later. Always at least 2 nodes (start, end); "Path
+          // Nodes" inserts more in between.
           nodes: [
             { x: 0, y: 0, z: 60 }, // start
             { x: 0, y: 0, z: 0 }   // end
@@ -733,7 +738,10 @@
         },
         speed: 12.0,
         color: '#000000',
-        active: true
+        active: true,
+        // Live sidestep around orbitals the path would otherwise cross —
+        // see the Orbital Collision Avoidance section, further down.
+        avoidance: true
       },
       // Camera Controls
       camera: {
@@ -876,7 +884,7 @@
     const LCARS_PALETTE = {
       butterscotch: '#ff9c00',  // Source tab + summon hint
       africanViolet: '#cc99cc', // Orbit tab
-      periwinkle: '#9999ff',    // Cube tab
+      periwinkle: '#9999ff',    // Orbital tab
       gold: '#ffcc66',          // Surface tab + intermediate path nodes
       mars: '#ff6666',          // Runner tab + path endpoints
       ice: '#66ccff',           // Camera tab
@@ -960,10 +968,14 @@
     }
 
     // Where Floor and Sky are both anchored, per params.world.alignment:
-    //   Source — the fixed point everything else is built around (origin)
-    //   Cube   — derived from the orbiting cubes' current height (default,
-    //            matches the construct's original hardcoded floor)
-    //   XYZ    — fully manual, no dependency on any other entity
+    //   Source  — the fixed point everything else is built around (origin)
+    //   Orbital — derived from the orbiting entities' current height
+    //             (default, matches the construct's original hardcoded
+    //             floor). Still stored/compared as the value 'Cube' below —
+    //             only its displayed label changed to 'Orbital' in the HUD,
+    //             so saved/exported programs from before the rename keep
+    //             working unmodified.
+    //   XYZ     — fully manual, no dependency on any other entity
     function computeWorldAnchor() {
       switch (params.world.alignment) {
         case 'Source':
@@ -974,6 +986,15 @@
         default:
           return { x: 0, y: -params.cube.sizeY / 2, z: 0 };
       }
+    }
+
+    // The runner's path is authored in height-above-ground terms (see the
+    // path.nodes comment below), so anywhere the runner/its path preview is
+    // actually placed in world space needs to add this — the same anchor
+    // height Floor and Sky already build on, kept as one function so all
+    // three entities can never drift apart onto different ground planes.
+    function groundLevelY() {
+      return computeWorldAnchor().y;
     }
 
     function buildGroundGeometry(type, size) {
@@ -1011,13 +1032,20 @@
       // Sky is viewed from inside (BackSide, like a skybox); floor is
       // viewed from above/outside (DoubleSide, cheap insurance either way).
       const side = isSky ? THREE.BackSide : THREE.DoubleSide;
+      // Lambert (not Basic) for every surface style, Grid and Image
+      // included — Basic ignores lighting entirely, so even though the
+      // orbitals and the central light were already fully wired for
+      // shadows (castShadow/receiveShadow + a real shadow map), a Grid or
+      // Image floor never actually displayed a shadow falling on it. Only
+      // the default flat-Color surface happened to use a light-responsive
+      // material before this.
       if (config.surface === 'Grid') {
         const tex = createGridTexture(config.color, config.gridSize);
         tex.repeat.set(config.gridFrequency, config.gridFrequency);
-        return new THREE.MeshBasicMaterial({ map: tex, transparent: true, side });
+        return new THREE.MeshLambertMaterial({ map: tex, transparent: true, side });
       }
       if (config.surface === 'Image' && imageTexture) {
-        return new THREE.MeshBasicMaterial({ map: imageTexture, side });
+        return new THREE.MeshLambertMaterial({ map: imageTexture, side });
       }
       // 'Color', or 'Image' with nothing uploaded yet — same flat-color
       // fallback used by the runner's Custom shape before a model loads
@@ -1031,21 +1059,42 @@
       return isSky ? anchor.y + config.size * 0.6 : anchor.y;
     }
 
+    // A tiny, size-proportional vertical clearance so the sky's surface
+    // never sits exactly coincident with the floor's. Square/Radial already
+    // separate the two by a wide margin (flatSurfaceY above), but Hemisphere
+    // and Cube world geometries were putting both surfaces on the *exact*
+    // same plane where they meet — the sky dome's rim landed on the same
+    // height as the floor bowl's rim, and the sky box's underside landed on
+    // the same height as the floor box's top face — so they z-fought
+    // (flickered) there no matter which surface style (Color/Grid/Image)
+    // was applied, since the conflict is purely geometric, not material.
+    function groundClearance(config) {
+      return Math.max(0.5, config.size * 0.01);
+    }
+
     function positionGroundMesh(mesh, config, isSky) {
       const anchor = computeWorldAnchor();
       switch (params.world.geometry) {
         case 'Hemisphere':
           // Floor: bowl opening upward (flip the dome). Sky: dome rising
-          // from ground level, camera-friendly BackSide handles the inside view.
+          // from ground level, camera-friendly BackSide handles the inside
+          // view — nudged up by the clearance so its base ring clears the
+          // floor bowl's opening instead of coinciding with it.
           mesh.rotation.x = isSky ? 0 : Math.PI;
           mesh.rotation.z = 0;
-          mesh.position.set(anchor.x, anchor.y, anchor.z);
+          mesh.position.set(anchor.x, anchor.y + (isSky ? groundClearance(config) : 0), anchor.z);
           break;
         case 'Cube':
           mesh.rotation.set(0, 0, 0);
           // Floor: top face at the anchor (a solid platform underneath).
-          // Sky: box centered above, anchor to roof, enclosing the scene.
-          mesh.position.set(anchor.x, isSky ? anchor.y + config.size / 2 : anchor.y - config.size / 2, anchor.z);
+          // Sky: box centered above, anchor to roof, enclosing the scene —
+          // its underside nudged up by the clearance so it doesn't share
+          // the floor's top face.
+          mesh.position.set(
+            anchor.x,
+            isSky ? anchor.y + config.size / 2 + groundClearance(config) : anchor.y - config.size / 2,
+            anchor.z
+          );
           break;
         case 'Square':
         case 'Radial':
@@ -1166,6 +1215,11 @@
       if (skyMesh) positionGroundMesh(skyMesh, params.sky, true);
       if (floorRadialGrid) positionRadialGridGroup(floorRadialGrid, params.floor, false);
       if (skyRadialGrid) positionRadialGridGroup(skyRadialGrid, params.sky, true);
+      // The runner's path is stored height-above-ground, so whenever the
+      // ground itself moves (Cube dimension change, World Alignment/Offset
+      // change) the path markers and preview line need repositioning too,
+      // or they'd visually drift away from where the runner actually runs.
+      if (pathSampler) syncPath();
     }
 
     function loadGroundImage(kind, file) {
@@ -1413,6 +1467,14 @@
     let runnerDirection = 1;   // 1 = start→end, -1 = end→start (Boomerang)
     let runnerForward = { x: 0, y: 0, z: -1 }; // last known travel direction (XZ), for facing + camera trail
 
+    // Live lateral dodge applied on top of the sampled path position — see
+    // the Orbital Collision Avoidance section further down. Eased, not
+    // snapped, so the runner settles back onto its authored path smoothly
+    // once clear rather than popping back into place.
+    let avoidOffsetX = 0;
+    let avoidOffsetZ = 0;
+    let lastAvoidUrgency = 0; // 0 = clear, 1 = actively dodging at full strength
+
     // --- Manual Camera Controls (mouse drag / touch drag, wheel / pinch zoom) ---
     // Registered unconditionally so the gesture handlers are always attached;
     // `controls.enabled` gates whether they actually move the camera, since
@@ -1443,7 +1505,7 @@
     // Map a raw raycast hit back to the logical entity it belongs to
     function resolveEntity(obj) {
       const cubeIndex = cubes.indexOf(obj);
-      if (cubeIndex !== -1) return { root: obj, label: 'Orbit Cube ' + (cubeIndex + 1) };
+      if (cubeIndex !== -1) return { root: obj, label: 'Orbital ' + (cubeIndex + 1) };
       if (obj === sourceMesh) return { root: obj, label: 'Central Source' };
       if (runnerMeshes.includes(obj)) return { root: runnerGroup, label: 'Runner' };
       return null;
@@ -1729,12 +1791,19 @@
           return marker;
         });
       }
-      pathMarkers.forEach((m, i) => m.position.set(nodes[i].x, nodes[i].y, nodes[i].z));
+      // nodes[i].y is height-above-ground (see the params.runner.path
+      // comment) — add the current ground level so markers/line render
+      // exactly where the runner itself will be, not at the raw stored Y.
+      const groundY = groundLevelY();
+      pathMarkers.forEach((m, i) => m.position.set(nodes[i].x, nodes[i].y + groundY, nodes[i].z));
 
       pathSampler = buildPathSampler(nodes, params.runner.path.corner);
       const segments = 48;
       const linePts = [];
-      for (let i = 0; i <= segments; i++) linePts.push(pathSampler.pointAt((i / segments) * pathSampler.length));
+      for (let i = 0; i <= segments; i++) {
+        const p = pathSampler.pointAt((i / segments) * pathSampler.length);
+        linePts.push(new THREE.Vector3(p.x, p.y + groundY, p.z));
+      }
       if (!pathLine) {
         pathLine = new THREE.Line(
           new THREE.BufferGeometry(),
@@ -2093,7 +2162,7 @@
     const TABS = [
       { id: 'source', label: 'Source', accent: LCARS_PALETTE.butterscotch },
       { id: 'orbit', label: 'Orbit', accent: LCARS_PALETTE.africanViolet },
-      { id: 'cube', label: 'Cube', accent: LCARS_PALETTE.periwinkle },
+      { id: 'cube', label: 'Orbital', accent: LCARS_PALETTE.periwinkle },
       { id: 'surface', label: 'Surface', accent: LCARS_PALETTE.gold },
       { id: 'runner', label: 'Runner', accent: LCARS_PALETTE.mars },
       { id: 'camera', label: 'Camera', accent: LCARS_PALETTE.ice },
@@ -2188,7 +2257,7 @@
     }});
 
     // 2. Orbit & Central Cog — the structural mechanism orbiting the source
-    createSliderPanel(orbitTab, { code: 'ORB-01', title: 'Cube Count', unit: 'n', min: 3, max: 24, step: 1, value: params.orbit.count, format: v => Math.round(v), onInput: v => {
+    createSliderPanel(orbitTab, { code: 'ORB-01', title: 'Orbital Count', unit: 'n', min: 3, max: 24, step: 1, value: params.orbit.count, format: v => Math.round(v), onInput: v => {
       params.orbit.count = Math.round(v);
       buildOrbitingCubes();
     }});
@@ -2204,7 +2273,7 @@
       orbitGroup.scale.set(v, 1, v);
     }});
 
-    // 3. Cube Entity Dimensions — geometry of the orbiting units themselves
+    // 3. Orbital Entity Dimensions — geometry of the orbiting units themselves
     createTogglePanel(cubeTab, { code: 'CUB-01', title: 'Lock XYZ Proportions', value: params.cube.proportionalLock, onLabel: 'LOCKED', offLabel: 'UNLOCKED', onChange: v => {
       params.cube.proportionalLock = v;
     }});
@@ -2377,6 +2446,9 @@
       runnerBodyMat.color.set(c);
       limbMat.color.set(c);
     }});
+    createTogglePanel(runnerTab, { code: 'RUN-16', title: 'Orbital Avoidance', value: params.runner.avoidance, onLabel: 'ACTIVE', offLabel: 'OFF', onChange: v => {
+      params.runner.avoidance = v;
+    }});
 
     // 6. Camera — the observer's viewpoint onto everything above
     createSelectPanel(cameraTab, {
@@ -2418,13 +2490,16 @@
     //
     // Alignment options are ordered by degrees of freedom, least to
     // most: Source is a fixed point (zero freedom — it's always the
-    // origin), Cube is a derived point (one freedom — it moves only
-    // as the cube's own height changes), XYZ is fully manual (three
-    // free coordinates, no dependency on any other entity).
+    // origin), Orbital is a derived point (one freedom — it moves only
+    // as the orbitals' own height changes), XYZ is fully manual (three
+    // free coordinates, no dependency on any other entity). Displayed as
+    // "Orbital" but still stored as the value 'Cube' (see labels below),
+    // so this stays compatible with programs saved before the rename.
     createSelectPanel(worldTab, {
       code: 'WLD-01',
       title: 'World Alignment',
       options: ['Source', 'Cube', 'XYZ'],
+      labels: { Cube: 'Orbital' },
       value: params.world.alignment,
       onChange: v => {
         params.world.alignment = v;
@@ -2702,6 +2777,97 @@
     createExportPanel(memoryTab);
     createImportPanel(memoryTab);
 
+    // --- Orbital Collision Avoidance ---
+    // The runner's path is authored freely and can cross the orbit ring;
+    // rather than letting it clip through an orbital, every frame checks
+    // the runner's current world position against each orbital's current
+    // (rotating) world position using a simple bounding-sphere "hitbox" —
+    // cheap and rotation-invariant, so it doesn't care how the box is
+    // currently oriented. A detected threat nudges the runner sideways, off
+    // its nominal path line, but the nudge itself eases toward its target
+    // via AVOID_RAMP_RATE rather than snapping — so the dodge reads as
+    // tentative the moment a threat appears and only commits to a full,
+    // confident sidestep if it holds. It eases back to zero the same way
+    // once clear, so the runner settles smoothly back onto its authored path.
+    const AVOID_SAFETY_MARGIN = 1.5; // extra clearance added to both hitboxes' radii
+    const AVOID_RAMP_RATE = 2.5;     // higher = faster to react and to settle back
+    const cubeWorldPos = new THREE.Vector3();
+    const runnerWorldPos = new THREE.Vector3();
+
+    // Bounding-sphere radius covering the orbital's full box regardless of
+    // its current facing (lookAt rotation) — the half-diagonal of the
+    // scaled box. cogSize scales X/Z (orbitGroup.scale), not Y.
+    function orbitalRadius() {
+      return 0.5 * Math.sqrt(
+        Math.pow(params.cube.sizeX * params.orbit.cogSize, 2) +
+        Math.pow(params.cube.sizeY, 2) +
+        Math.pow(params.cube.sizeZ * params.orbit.cogSize, 2)
+      );
+    }
+
+    // Advances the eased dodge offset for one frame and returns this
+    // frame's avoidance urgency (0 = clear, 1 = as close as the hitboxes
+    // allow), which the caller uses to also ease off the runner's forward
+    // speed while a dodge is in progress.
+    function updateOrbitalAvoidance(delta, pathX, pathY, pathZ) {
+      const ease = clamp(AVOID_RAMP_RATE * delta, 0, 1);
+
+      if (!params.runner.avoidance || cubes.length === 0) {
+        avoidOffsetX += (0 - avoidOffsetX) * ease;
+        avoidOffsetZ += (0 - avoidOffsetZ) * ease;
+        return 0;
+      }
+
+      // Threat detection deliberately uses the *nominal* path position, not
+      // pathX/Z plus the dodge already applied — folding the accumulated
+      // offset back into the distance check would let the dodge dilute its
+      // own trigger (moving away lowers the measured urgency, which eases
+      // the offset back down, which raises the urgency again...), settling
+      // short of actually clearing the hitbox instead of committing fully.
+      runnerWorldPos.set(pathX, pathY, pathZ);
+      const rRadius = 0.6 * params.runner.size;
+      const oRadius = orbitalRadius();
+      const threatRadius = rRadius + oRadius + AVOID_SAFETY_MARGIN;
+
+      // Only the single strongest threat steers this frame — with orbitals
+      // evenly spaced around one ring, more than one is rarely in range at
+      // once, and reacting to just the closest keeps the dodge decisive
+      // instead of averaging out opposing pushes.
+      let strongest = null;
+      let strongestUrgency = 0;
+      cubes.forEach(cube => {
+        cube.getWorldPosition(cubeWorldPos);
+        const dist = runnerWorldPos.distanceTo(cubeWorldPos);
+        if (dist >= threatRadius) return;
+        const urgency = clamp(1 - dist / threatRadius, 0, 1);
+        if (urgency > strongestUrgency) {
+          strongestUrgency = urgency;
+          strongest = cube;
+        }
+      });
+
+      let targetX = 0, targetZ = 0;
+      if (strongest) {
+        strongest.getWorldPosition(cubeWorldPos);
+        let dx = runnerWorldPos.x - cubeWorldPos.x;
+        let dz = runnerWorldPos.z - cubeWorldPos.z;
+        let len = Math.hypot(dx, dz);
+        if (len < 0.001) {
+          // Degenerate (exact overlap) — dodge perpendicular to the current
+          // travel direction instead of dividing by zero.
+          dx = -runnerForward.z; dz = runnerForward.x; len = 1;
+        }
+        const dodgeDistance = rRadius + oRadius + 2;
+        targetX = (dx / len) * dodgeDistance * strongestUrgency;
+        targetZ = (dz / len) * dodgeDistance * strongestUrgency;
+      }
+
+      avoidOffsetX += (targetX - avoidOffsetX) * ease;
+      avoidOffsetZ += (targetZ - avoidOffsetZ) * ease;
+
+      return strongestUrgency;
+    }
+
     // --- Animation Loop ---
     const clock = new THREE.Clock();
 
@@ -2716,7 +2882,11 @@
 
       // Runner Motion along its configured path (start/end/nodes)
       if (params.runner.active && pathSampler && pathSampler.length > 0) {
-        runnerProgress += params.runner.speed * delta * runnerDirection;
+        // Slow the advance while actively dodging an orbital (urgency
+        // ramped up by last frame's avoidance check) — cautious near a
+        // hazard, back to full speed the moment it's clear.
+        const speedScale = 1 - 0.6 * lastAvoidUrgency;
+        runnerProgress += params.runner.speed * speedScale * delta * runnerDirection;
 
         if (params.runner.path.mode === 'Loop') {
           if (runnerProgress > pathSampler.length) runnerProgress -= pathSampler.length;
@@ -2732,19 +2902,24 @@
           }
         }
 
-        const pos = pathSampler.pointAt(runnerProgress);
-        runnerGroup.position.copy(pos);
+        // rawPos is the nominal, authored path position — height-above-
+        // ground, so groundLevelY() lands it on the orbitals' bottom plane
+        // (or wherever World Alignment currently anchors "ground").
+        const rawPos = pathSampler.pointAt(runnerProgress);
+        const groundY = groundLevelY();
+        lastAvoidUrgency = updateOrbitalAvoidance(delta, rawPos.x, rawPos.y + groundY, rawPos.z);
+        runnerGroup.position.set(rawPos.x + avoidOffsetX, rawPos.y + groundY, rawPos.z + avoidOffsetZ);
 
         // Face the direction of travel (flattened to the XZ plane) so
         // corners actually read as turns, not just an invisible path shape
         const lookAheadDist = clamp(runnerProgress + 0.5 * runnerDirection, 0, pathSampler.length);
         const ahead = pathSampler.pointAt(lookAheadDist);
-        const dx = ahead.x - pos.x, dz = ahead.z - pos.z;
+        const dx = ahead.x - rawPos.x, dz = ahead.z - rawPos.z;
         if (dx * dx + dz * dz > 1e-6) {
           const len = Math.hypot(dx, dz);
           runnerForward.x = dx / len;
           runnerForward.z = dz / len;
-          runnerGroup.lookAt(ahead.x, pos.y, ahead.z);
+          runnerGroup.lookAt(ahead.x + avoidOffsetX, rawPos.y + groundY, ahead.z + avoidOffsetZ);
         }
 
         // Articulated leg swing (Rectifier shape only)
