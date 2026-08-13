@@ -21,6 +21,7 @@
       --lcars-gold: #ffcc66;
       --lcars-mars: #ff6666;
       --lcars-ice: #66ccff;
+      --lcars-salmon: #ff9977;
       --lcars-alert: #33ffff;
     }
     body, html {
@@ -555,6 +556,30 @@
         trackingMode: 'Runner Tracking',
         distance: 12,
         height: 3.5
+      },
+      // World: the shared reference frame Floor and Sky are both anchored
+      // to, plus Floor & Sky themselves (identical option shape). Defaults
+      // reproduce the original hardcoded floor exactly, and default the
+      // sky to invisible, so the scene looks unchanged until touched.
+      world: {
+        alignment: 'Cube', // 'Source' | 'Cube' | 'XYZ'
+        offset: { x: 0, y: 0, z: 0 } // used only when alignment is 'XYZ'
+      },
+      floor: {
+        geometry: 'Square',   // 'Square' | 'Radial' | 'Hemisphere' | 'Cube'
+        size: 300,
+        surface: 'Color',     // 'Off' | 'Color' | 'Grid' | 'Image'
+        color: '#111111',
+        gridFrequency: 10,
+        gridSize: 2
+      },
+      sky: {
+        geometry: 'Hemisphere',
+        size: 400,
+        surface: 'Off',
+        color: '#0a0a1a',
+        gridFrequency: 10,
+        gridSize: 2
       }
     };
 
@@ -572,6 +597,7 @@
       gold: '#ffcc66',          // Surface tab + intermediate path nodes
       mars: '#ff6666',          // Runner tab + path endpoints
       ice: '#66ccff',           // Camera tab
+      salmon: '#ff9977',        // World tab (floor & sky)
       alert: '#33ffff'          // Selection highlight + path preview line
     };
 
@@ -635,14 +661,163 @@
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.05);
     scene.add(ambientLight);
 
-    // Ground plane (horizon aligner & shadow catcher)
-    const floorGeo = new THREE.PlaneGeometry(300, 300);
-    const floorMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
-    const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -params.cube.sizeY / 2;
-    floor.receiveShadow = true;
-    scene.add(floor);
+    // --- Floor & Sky ---
+    // Floor and sky share one option shape (geometry + surface) and are
+    // built by the same code, just mirrored: floor sits at the construct's
+    // ground level, sky wraps around/above it. `kind` is 'floor' or 'sky'
+    // throughout this section.
+    let floorMesh = null;
+    let skyMesh = null;
+    let floorImageTexture = null;
+    let skyImageTexture = null;
+
+    function groundConfig(kind) {
+      return kind === 'sky' ? params.sky : params.floor;
+    }
+
+    // Where Floor and Sky are both anchored, per params.world.alignment:
+    //   Source — the fixed point everything else is built around (origin)
+    //   Cube   — derived from the orbiting cubes' current height (default,
+    //            matches the construct's original hardcoded floor)
+    //   XYZ    — fully manual, no dependency on any other entity
+    function computeWorldAnchor() {
+      switch (params.world.alignment) {
+        case 'Source':
+          return { x: 0, y: 0, z: 0 };
+        case 'XYZ':
+          return { x: params.world.offset.x, y: params.world.offset.y, z: params.world.offset.z };
+        case 'Cube':
+        default:
+          return { x: 0, y: -params.cube.sizeY / 2, z: 0 };
+      }
+    }
+
+    function buildGroundGeometry(type, size) {
+      switch (type) {
+        case 'Radial': return new THREE.CircleGeometry(size / 2, 64);
+        case 'Hemisphere': return new THREE.SphereGeometry(size / 2, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2);
+        case 'Cube': return new THREE.BoxGeometry(size, size, size);
+        case 'Square':
+        default: return new THREE.PlaneGeometry(size, size);
+      }
+    }
+
+    // Draws a single tile's border into a small canvas and tiles it via
+    // texture.repeat — works on curved geometry too, unlike a flat line
+    // helper, so the same grid surface applies to a dome or a skybox.
+    function createGridTexture(color, lineWidthPx) {
+      const res = 128;
+      const canvas = document.createElement('canvas');
+      canvas.width = res;
+      canvas.height = res;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, res, res);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidthPx;
+      ctx.strokeRect(0, 0, res, res);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      return texture;
+    }
+
+    function buildSurfaceMaterial(config, isSky, imageTexture) {
+      // Sky is viewed from inside (BackSide, like a skybox); floor is
+      // viewed from above/outside (DoubleSide, cheap insurance either way).
+      const side = isSky ? THREE.BackSide : THREE.DoubleSide;
+      if (config.surface === 'Grid') {
+        const tex = createGridTexture(config.color, config.gridSize);
+        tex.repeat.set(config.gridFrequency, config.gridFrequency);
+        return new THREE.MeshBasicMaterial({ map: tex, transparent: true, side });
+      }
+      if (config.surface === 'Image' && imageTexture) {
+        return new THREE.MeshBasicMaterial({ map: imageTexture, side });
+      }
+      // 'Color', or 'Image' with nothing uploaded yet — same flat-color
+      // fallback used by the runner's Custom shape before a model loads
+      return new THREE.MeshLambertMaterial({ color: config.color, side });
+    }
+
+    function positionGroundMesh(mesh, config, isSky) {
+      const anchor = computeWorldAnchor();
+      switch (config.geometry) {
+        case 'Hemisphere':
+          // Floor: bowl opening upward (flip the dome). Sky: dome rising
+          // from ground level, camera-friendly BackSide handles the inside view.
+          mesh.rotation.x = isSky ? 0 : Math.PI;
+          mesh.rotation.z = 0;
+          mesh.position.set(anchor.x, anchor.y, anchor.z);
+          break;
+        case 'Cube':
+          mesh.rotation.set(0, 0, 0);
+          // Floor: top face at the anchor (a solid platform underneath).
+          // Sky: box centered above, anchor to roof, enclosing the scene.
+          mesh.position.set(anchor.x, isSky ? anchor.y + config.size / 2 : anchor.y - config.size / 2, anchor.z);
+          break;
+        case 'Square':
+        case 'Radial':
+        default:
+          mesh.rotation.set(-Math.PI / 2, 0, 0);
+          // Floor: flat at the anchor. Sky: flat "ceiling" scaled with size.
+          mesh.position.set(anchor.x, isSky ? anchor.y + config.size * 0.6 : anchor.y, anchor.z);
+          break;
+      }
+    }
+
+    function rebuildGroundMesh(kind) {
+      const isSky = kind === 'sky';
+      const config = groundConfig(kind);
+      const old = isSky ? skyMesh : floorMesh;
+      const persistentTex = isSky ? skyImageTexture : floorImageTexture;
+
+      if (old) {
+        scene.remove(old);
+        old.geometry.dispose();
+        if (old.material.map && old.material.map !== persistentTex) old.material.map.dispose();
+        old.material.dispose();
+      }
+
+      const geometry = buildGroundGeometry(config.geometry, config.size);
+      const material = buildSurfaceMaterial(config, isSky, persistentTex);
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.visible = config.surface !== 'Off';
+      mesh.receiveShadow = !isSky;
+      mesh.castShadow = false;
+      positionGroundMesh(mesh, config, isSky);
+
+      scene.add(mesh);
+      if (isSky) skyMesh = mesh; else floorMesh = mesh;
+    }
+
+    // Cheap re-layout for when only the construct's height changed (dragging
+    // the Cube dimension sliders fires continuously; a full geometry/material
+    // rebuild on every tick would be wasteful, repositioning is nearly free).
+    function repositionGroundMeshes() {
+      if (floorMesh) positionGroundMesh(floorMesh, params.floor, false);
+      if (skyMesh) positionGroundMesh(skyMesh, params.sky, true);
+    }
+
+    function loadGroundImage(kind, file) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        new THREE.TextureLoader().load(e.target.result, texture => {
+          texture.wrapS = THREE.RepeatWrapping;
+          texture.wrapT = THREE.RepeatWrapping;
+          if (kind === 'sky') {
+            if (skyImageTexture) skyImageTexture.dispose();
+            skyImageTexture = texture;
+          } else {
+            if (floorImageTexture) floorImageTexture.dispose();
+            floorImageTexture = texture;
+          }
+          rebuildGroundMesh(kind);
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+
+    rebuildGroundMesh('floor');
+    rebuildGroundMesh('sky');
 
     // --- Cube Materials Construction ---
     // Standard BoxGeometry material array order: [+X, -X, +Y, -Y, +Z, -Z]
@@ -1246,7 +1421,7 @@
       cubes.forEach(cube => {
         cube.scale.set(params.cube.sizeX, params.cube.sizeY, params.cube.sizeZ);
       });
-      floor.position.y = -params.cube.sizeY / 2;
+      repositionGroundMeshes();
     }
 
     // --- LCARS HUD: element builders ---
@@ -1267,6 +1442,7 @@
     function createSliderPanel(container, opts) {
       const format = opts.format || (v => v);
       const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
+      if (opts.visible === false) panel.style.display = 'none';
       panel.appendChild(panelHeader(opts.code, opts.title));
 
       const valueEl = el('div', 'tool-value', format(opts.value));
@@ -1292,7 +1468,8 @@
         refresh(v) {
           slider.value = v;
           valueEl.childNodes[0].textContent = format(v);
-        }
+        },
+        setVisible(v) { panel.style.display = v ? '' : 'none'; }
       };
     }
 
@@ -1360,6 +1537,7 @@
 
     function createColorPanel(container, opts) {
       const panel = el('div', 'lcars-panel');
+      if (opts.visible === false) panel.style.display = 'none';
       panel.appendChild(panelHeader(opts.code, opts.title));
 
       const row = el('div', 'tool-color-row');
@@ -1381,7 +1559,8 @@
         refresh(v) {
           swatch.value = v;
           valueEl.textContent = v.toUpperCase();
-        }
+        },
+        setVisible(v) { panel.style.display = v ? '' : 'none'; }
       };
     }
 
@@ -1423,7 +1602,8 @@
       { id: 'cube', label: 'Cube', accent: LCARS_PALETTE.periwinkle },
       { id: 'surface', label: 'Surface', accent: LCARS_PALETTE.gold },
       { id: 'runner', label: 'Runner', accent: LCARS_PALETTE.mars },
-      { id: 'camera', label: 'Camera', accent: LCARS_PALETTE.ice }
+      { id: 'camera', label: 'Camera', accent: LCARS_PALETTE.ice },
+      { id: 'world', label: 'World', accent: LCARS_PALETTE.salmon }
     ];
 
     const tabPanelEls = {};
@@ -1464,6 +1644,7 @@
     const surfaceTab = tabPanelEls.surface;
     const runnerTab = tabPanelEls.runner;
     const cameraTab = tabPanelEls.camera;
+    const worldTab = tabPanelEls.world;
 
     // 1. Central Source — the construct's core, everything else is built around it
     createColorPanel(sourceTab, { code: 'SRC-01', title: 'Source Color', value: params.source.color, onChange: c => {
@@ -1708,6 +1889,122 @@
     createSliderPanel(cameraTab, { code: 'CAM-04', title: 'Follow Height', unit: 'u', min: 0.5, max: 20, step: 0.5, value: params.camera.height, format: v => v.toFixed(1), onInput: v => {
       params.camera.height = v;
     }});
+
+    // 7. World — the reference frame first (Alignment), then the two
+    // things anchored to it (Floor, Sky): establish where "here" is
+    // before configuring what sits there.
+    //
+    // Alignment options are ordered by degrees of freedom, least to
+    // most: Source is a fixed point (zero freedom — it's always the
+    // origin), Cube is a derived point (one freedom — it moves only
+    // as the cube's own height changes), XYZ is fully manual (three
+    // free coordinates, no dependency on any other entity).
+    createSelectPanel(worldTab, {
+      code: 'WLD-01',
+      title: 'World Alignment',
+      options: ['Source', 'Cube', 'XYZ'],
+      value: params.world.alignment,
+      onChange: v => {
+        params.world.alignment = v;
+        repositionGroundMeshes();
+        worldOffsetXPanel.setVisible(v === 'XYZ');
+        worldOffsetYPanel.setVisible(v === 'XYZ');
+        worldOffsetZPanel.setVisible(v === 'XYZ');
+      }
+    });
+    const worldOffsetXPanel = createSliderPanel(worldTab, {
+      code: 'WLD-02', title: 'World Offset X', unit: 'u', min: -150, max: 150, step: 1, value: params.world.offset.x, format: v => Math.round(v),
+      visible: params.world.alignment === 'XYZ', sub: true,
+      onInput: v => {
+        params.world.offset.x = v;
+        repositionGroundMeshes();
+      }
+    });
+    const worldOffsetYPanel = createSliderPanel(worldTab, {
+      code: 'WLD-03', title: 'World Offset Y', unit: 'u', min: -50, max: 50, step: 1, value: params.world.offset.y, format: v => Math.round(v),
+      visible: params.world.alignment === 'XYZ', sub: true,
+      onInput: v => {
+        params.world.offset.y = v;
+        repositionGroundMeshes();
+      }
+    });
+    const worldOffsetZPanel = createSliderPanel(worldTab, {
+      code: 'WLD-04', title: 'World Offset Z', unit: 'u', min: -150, max: 150, step: 1, value: params.world.offset.z, format: v => Math.round(v),
+      visible: params.world.alignment === 'XYZ', sub: true,
+      onInput: v => {
+        params.world.offset.z = v;
+        repositionGroundMeshes();
+      }
+    });
+
+    // Floor & Sky. Identical option shape, so one builder wires up both,
+    // just pointed at 'floor' vs 'sky' and their own code prefix.
+    function buildGroundPanels(tab, kind, prefix, label) {
+      const config = groundConfig(kind);
+
+      createSelectPanel(tab, {
+        code: prefix + '-01',
+        title: label + ' Geometry',
+        options: ['Square', 'Radial', 'Hemisphere', 'Cube'],
+        value: config.geometry,
+        onChange: v => {
+          config.geometry = v;
+          rebuildGroundMesh(kind);
+        }
+      });
+      createSliderPanel(tab, { code: prefix + '-02', title: label + ' Size', unit: 'u', min: 20, max: 600, step: 10, value: config.size, format: v => Math.round(v), onInput: v => {
+        config.size = v;
+        rebuildGroundMesh(kind);
+      }});
+      createSelectPanel(tab, {
+        code: prefix + '-03',
+        title: label + ' Surface',
+        options: ['Off', 'Color', 'Grid', 'Image'],
+        value: config.surface,
+        onChange: v => {
+          config.surface = v;
+          rebuildGroundMesh(kind);
+          colorPanel.setVisible(v === 'Color' || v === 'Grid');
+          gridFreqPanel.setVisible(v === 'Grid');
+          gridSizePanel.setVisible(v === 'Grid');
+          imagePanel.setVisible(v === 'Image');
+        }
+      });
+      const colorPanel = createColorPanel(tab, {
+        code: prefix + '-04', title: label + ' Color', value: config.color,
+        visible: config.surface === 'Color' || config.surface === 'Grid',
+        onChange: c => {
+          config.color = c;
+          rebuildGroundMesh(kind);
+        }
+      });
+      const gridFreqPanel = createSliderPanel(tab, {
+        code: prefix + '-05', title: 'Grid Frequency', unit: '×', min: 2, max: 40, step: 1, value: config.gridFrequency, format: v => Math.round(v),
+        visible: config.surface === 'Grid', sub: true,
+        onInput: v => {
+          config.gridFrequency = Math.round(v);
+          rebuildGroundMesh(kind);
+        }
+      });
+      const gridSizePanel = createSliderPanel(tab, {
+        code: prefix + '-06', title: 'Grid Line Size', unit: 'px', min: 1, max: 12, step: 1, value: config.gridSize, format: v => Math.round(v),
+        visible: config.surface === 'Grid', sub: true,
+        onInput: v => {
+          config.gridSize = Math.round(v);
+          rebuildGroundMesh(kind);
+        }
+      });
+      const imagePanel = createFilePanel(tab, {
+        code: prefix + '-07',
+        title: label + ' Image',
+        accept: 'image/*',
+        visible: config.surface === 'Image',
+        onChange: file => loadGroundImage(kind, file)
+      });
+    }
+
+    buildGroundPanels(worldTab, 'floor', 'FLR', 'Floor');
+    buildGroundPanels(worldTab, 'sky', 'SKY', 'Sky');
 
     // --- Animation Loop ---
     const clock = new THREE.Clock();
