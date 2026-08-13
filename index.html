@@ -174,6 +174,9 @@
       top: 20px;
       right: 20px;
       padding: 8px 16px;
+      appearance: none;
+      -webkit-appearance: none;
+      border: none;
       font-family: 'Antonio', 'Arial Narrow', sans-serif;
       font-size: 11px;
       font-weight: 700;
@@ -183,8 +186,7 @@
       background: var(--lcars-butterscotch);
       border-radius: 2px 2px 2px 20px; /* echoes the cap's sweep, closed-state preview */
       z-index: 20;
-      /* Purely informational — never steal the double-tap meant for the canvas underneath */
-      pointer-events: none;
+      cursor: pointer;
     }
 
     .lcars-hud-hint[hidden] { display: none; }
@@ -574,6 +576,26 @@
       color: rgba(255, 255, 255, 0.4);
       text-transform: uppercase;
     }
+
+    /* One consistent themed focus ring for every keyboard-reachable control,
+       instead of leaving it to inconsistent browser defaults — and restoring
+       it where .tool-slider/.tool-toggle removed the native outline entirely. */
+    .lcars-hud-hint:focus-visible,
+    .lcars-tab:focus-visible,
+    .tool-slider:focus-visible,
+    .tool-toggle:focus-visible,
+    .tool-select__opt:focus-visible,
+    .tool-color-swatch:focus-visible,
+    .tool-file:focus-visible,
+    .tool-text-input:focus-visible,
+    .tool-text-button:focus-visible,
+    .tool-program-load:focus-visible,
+    .tool-program-delete:focus-visible,
+    .tool-textarea:focus-visible,
+    .lcars-hud__selection-clear:focus-visible {
+      outline: 2px solid var(--lcars-alert);
+      outline-offset: 2px;
+    }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -583,7 +605,7 @@
 <body>
   <div id="canvas-container"></div>
 
-  <div class="lcars-hud-hint" id="lcars-hud-hint">HUD-01 · double-tap to open</div>
+  <button type="button" class="lcars-hud-hint" id="lcars-hud-hint" aria-label="Open control menu">HUD-01 · double-tap to open</button>
 
   <div class="lcars-hud" id="lcars-hud">
     <div class="lcars-hud__bar">
@@ -1487,6 +1509,11 @@
       hudHintEl.hidden = true;
       updatePathMarkersVisibility();
       startTelemetry();
+      // Move focus into the panel, same as any standard disclosure widget —
+      // TABS/activeTabId are defined further down but this only runs later,
+      // after a real open gesture, by which point they're long since ready.
+      const active = TABS.find(t => t.id === activeTabId);
+      if (active) active.btn.focus();
     }
 
     function closeMenu() {
@@ -1496,7 +1523,16 @@
       hudHintEl.hidden = false;
       updatePathMarkersVisibility();
       stopTelemetry();
+      hudHintEl.focus(); // return focus to the (now visible again) summon control
     }
+
+    // The hint doubles as the only way to reach the HUD without a
+    // double-tap/double-click gesture — a single click/tap/Enter opens it.
+    hudHintEl.addEventListener('click', openMenu);
+    // Escape is the standard, expected way to dismiss an open overlay panel.
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && menuOpen) closeMenu();
+    });
 
     // Unified double-click (mouse) / double-tap (touch) detection via Pointer
     // Events, so both input types share one code path instead of relying on
@@ -1742,18 +1778,29 @@
       return node;
     }
 
+    // Every panel's visible title doubles as its control's accessible name
+    // via aria-labelledby, instead of a separately-typed aria-label string
+    // that could drift out of sync with what's on screen. panelIdCounter
+    // guarantees a unique id per panel across the whole HUD.
+    let panelIdCounter = 0;
+
     function panelHeader(code, title) {
+      const titleId = 'lcars-label-' + (panelIdCounter++);
       const header = el('div', 'lcars-panel__header');
-      header.appendChild(document.createTextNode(title));
+      const titleSpan = el('span', null, title);
+      titleSpan.id = titleId;
+      header.appendChild(titleSpan);
       header.appendChild(el('span', 'lcars-panel__code', code));
-      return header;
+      return { headerEl: header, titleId };
     }
 
     function createSliderPanel(container, opts) {
       const format = opts.format || (v => v);
+      const valueText = v => String(format(v)) + (opts.unit ? ' ' + opts.unit : '');
       const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
       if (opts.visible === false) panel.style.display = 'none';
-      panel.appendChild(panelHeader(opts.code, opts.title));
+      const { headerEl, titleId } = panelHeader(opts.code, opts.title);
+      panel.appendChild(headerEl);
 
       const valueEl = el('div', 'tool-value', format(opts.value));
       if (opts.unit) valueEl.appendChild(el('span', 'tool-value__unit', opts.unit));
@@ -1766,9 +1813,14 @@
       slider.max = opts.max;
       slider.step = opts.step;
       slider.value = opts.value;
+      slider.setAttribute('aria-labelledby', titleId);
+      // Screen readers announce the raw slider number by default; this makes
+      // them announce the same formatted+unit text the panel displays instead.
+      slider.setAttribute('aria-valuetext', valueText(opts.value));
       slider.addEventListener('input', () => {
         const v = parseFloat(slider.value);
         valueEl.childNodes[0].textContent = format(v);
+        slider.setAttribute('aria-valuetext', valueText(v));
         opts.onInput(v);
       });
       panel.appendChild(slider);
@@ -1778,6 +1830,7 @@
         refresh(v) {
           slider.value = v;
           valueEl.childNodes[0].textContent = format(v);
+          slider.setAttribute('aria-valuetext', valueText(v));
         },
         setVisible(v) { panel.style.display = v ? '' : 'none'; }
       };
@@ -1787,7 +1840,8 @@
       const onLabel = opts.onLabel || 'ENABLED';
       const offLabel = opts.offLabel || 'DISABLED';
       const panel = el('div', 'lcars-panel');
-      panel.appendChild(panelHeader(opts.code, opts.title));
+      const { headerEl, titleId } = panelHeader(opts.code, opts.title);
+      panel.appendChild(headerEl);
 
       const row = el('div', 'tool-toggle-row');
       const valueEl = el('div', 'tool-value tool-value--text', opts.value ? onLabel : offLabel);
@@ -1795,6 +1849,7 @@
       toggle.type = 'checkbox';
       toggle.className = 'tool-toggle';
       toggle.checked = opts.value;
+      toggle.setAttribute('aria-labelledby', titleId);
       toggle.addEventListener('change', () => {
         valueEl.textContent = toggle.checked ? onLabel : offLabel;
         opts.onChange(toggle.checked);
@@ -1815,19 +1870,27 @@
     function createSelectPanel(container, opts) {
       const labels = opts.labels || {};
       const panel = el('div', 'lcars-panel');
-      panel.appendChild(panelHeader(opts.code, opts.title));
+      const { headerEl, titleId } = panelHeader(opts.code, opts.title);
+      panel.appendChild(headerEl);
 
       const valueEl = el('div', 'tool-value tool-value--text', opts.value);
       panel.appendChild(valueEl);
 
       const optsRow = el('div', 'tool-select');
+      optsRow.setAttribute('role', 'group');
+      optsRow.setAttribute('aria-labelledby', titleId);
       const buttons = opts.options.map(optVal => {
         const btn = el('button', 'tool-select__opt' + (optVal === opts.value ? ' is-active' : ''), labels[optVal] || optVal);
         btn.type = 'button';
         btn.dataset.value = optVal;
+        btn.setAttribute('aria-pressed', optVal === opts.value ? 'true' : 'false');
         btn.addEventListener('click', () => {
-          buttons.forEach(b => b.classList.remove('is-active'));
+          buttons.forEach(b => {
+            b.classList.remove('is-active');
+            b.setAttribute('aria-pressed', 'false');
+          });
           btn.classList.add('is-active');
+          btn.setAttribute('aria-pressed', 'true');
           valueEl.textContent = optVal;
           opts.onChange(optVal);
         });
@@ -1840,15 +1903,21 @@
       return {
         refresh(v) {
           valueEl.textContent = v;
-          buttons.forEach(b => b.classList.toggle('is-active', b.dataset.value === v));
-        }
+          buttons.forEach(b => {
+            const active = b.dataset.value === v;
+            b.classList.toggle('is-active', active);
+            b.setAttribute('aria-pressed', active ? 'true' : 'false');
+          });
+        },
+        setVisible(v) { panel.style.display = v ? '' : 'none'; }
       };
     }
 
     function createColorPanel(container, opts) {
       const panel = el('div', 'lcars-panel');
       if (opts.visible === false) panel.style.display = 'none';
-      panel.appendChild(panelHeader(opts.code, opts.title));
+      const { headerEl, titleId } = panelHeader(opts.code, opts.title);
+      panel.appendChild(headerEl);
 
       const row = el('div', 'tool-color-row');
       const valueEl = el('div', 'tool-value tool-value--text', opts.value.toUpperCase());
@@ -1856,6 +1925,7 @@
       swatch.type = 'color';
       swatch.className = 'tool-color-swatch';
       swatch.value = opts.value;
+      swatch.setAttribute('aria-labelledby', titleId);
       swatch.addEventListener('input', () => {
         valueEl.textContent = swatch.value.toUpperCase();
         opts.onChange(swatch.value);
@@ -1877,7 +1947,8 @@
     function createFilePanel(container, opts) {
       const panel = el('div', 'lcars-panel');
       panel.style.display = opts.visible ? '' : 'none';
-      panel.appendChild(panelHeader(opts.code, opts.title));
+      const { headerEl, titleId } = panelHeader(opts.code, opts.title);
+      panel.appendChild(headerEl);
 
       const valueEl = el('div', 'tool-value tool-value--text', opts.value || 'NO FILE LOADED');
       panel.appendChild(valueEl);
@@ -1886,6 +1957,7 @@
       input.type = 'file';
       input.className = 'tool-file';
       if (opts.accept) input.accept = opts.accept;
+      input.setAttribute('aria-labelledby', titleId);
       input.addEventListener('change', () => {
         const file = input.files && input.files[0];
         if (file) {
@@ -1905,6 +1977,8 @@
     // --- LCARS HUD: menu + tabs scaffold ---
     const hudMenu = document.getElementById('lcars-menu');
     const hudPanels = document.getElementById('lcars-tabpanels');
+    hudMenu.setAttribute('role', 'tablist');
+    hudMenu.setAttribute('aria-label', 'Control categories');
 
     const TABS = [
       { id: 'source', label: 'Source', accent: LCARS_PALETTE.butterscotch },
@@ -1921,6 +1995,11 @@
     TABS.forEach((tab, i) => {
       const btn = el('button', 'lcars-tab' + (i === 0 ? ' is-active' : ''), tab.label);
       btn.type = 'button';
+      btn.id = 'lcars-tab-' + tab.id;
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+      btn.setAttribute('aria-controls', 'lcars-tabpanel-' + tab.id);
+      btn.tabIndex = i === 0 ? 0 : -1; // roving tabindex — standard ARIA tablist pattern
       btn.style.setProperty('--tab-accent', tab.accent);
       btn.style.setProperty('--tab-accent-dim', dimHex(tab.accent, 0.85));
       btn.addEventListener('click', () => activateTab(tab.id));
@@ -1928,6 +2007,9 @@
       tab.btn = btn;
 
       const panelEl = el('div', 'lcars-tabpanel' + (i === 0 ? ' is-active' : ''));
+      panelEl.id = 'lcars-tabpanel-' + tab.id;
+      panelEl.setAttribute('role', 'tabpanel');
+      panelEl.setAttribute('aria-labelledby', btn.id);
       panelEl.style.setProperty('--accent', tab.accent);
       hudPanels.appendChild(panelEl);
       tabPanelEls[tab.id] = panelEl;
@@ -1942,10 +2024,27 @@
       TABS.forEach(tab => {
         const active = tab.id === id;
         tab.btn.classList.toggle('is-active', active);
+        tab.btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        tab.btn.tabIndex = active ? 0 : -1;
         tabPanelEls[tab.id].classList.toggle('is-active', active);
       });
       updatePathMarkersVisibility();
     }
+
+    // Left/Right/Home/End moves focus AND activates — the standard ARIA
+    // "manual activation" tablist keyboard pattern.
+    hudMenu.addEventListener('keydown', (e) => {
+      const currentIndex = TABS.findIndex(t => t.id === activeTabId);
+      let nextIndex = null;
+      if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % TABS.length;
+      else if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + TABS.length) % TABS.length;
+      else if (e.key === 'Home') nextIndex = 0;
+      else if (e.key === 'End') nextIndex = TABS.length - 1;
+      if (nextIndex === null) return;
+      e.preventDefault();
+      activateTab(TABS[nextIndex].id);
+      TABS[nextIndex].btn.focus();
+    });
 
     activateTab(TABS[0].id); // seed the spine color to match the default active tab
 
@@ -2325,7 +2424,8 @@
     // a portable export/import code for taking a program to another browser.
     function createSaveProgramPanel(container, onSave) {
       const panel = el('div', 'lcars-panel');
-      panel.appendChild(panelHeader('MEM-01', 'Save Current Program'));
+      const { headerEl, titleId } = panelHeader('MEM-01', 'Save Current Program');
+      panel.appendChild(headerEl);
 
       const statusEl = el('div', 'tool-value tool-value--text', 'ENTER A NAME');
       panel.appendChild(statusEl);
@@ -2336,7 +2436,7 @@
       input.className = 'tool-text-input';
       input.placeholder = 'Program name';
       input.maxLength = 40;
-      input.setAttribute('aria-label', 'Program name to save');
+      input.setAttribute('aria-labelledby', titleId);
       row.appendChild(input);
 
       const btn = document.createElement('button');
@@ -2358,7 +2458,8 @@
 
     function createProgramListPanel(container) {
       const panel = el('div', 'lcars-panel');
-      panel.appendChild(panelHeader('MEM-02', 'Stored Programs'));
+      const { headerEl } = panelHeader('MEM-02', 'Stored Programs');
+      panel.appendChild(headerEl);
 
       const list = el('div', 'tool-program-list');
       panel.appendChild(list);
@@ -2405,7 +2506,8 @@
 
     function createExportPanel(container) {
       const panel = el('div', 'lcars-panel');
-      panel.appendChild(panelHeader('MEM-03', 'Export Code'));
+      const { headerEl, titleId } = panelHeader('MEM-03', 'Export Code');
+      panel.appendChild(headerEl);
 
       const statusEl = el('div', 'tool-value tool-value--text', 'Generate a code to share');
       panel.appendChild(statusEl);
@@ -2414,7 +2516,7 @@
       textarea.className = 'tool-textarea';
       textarea.readOnly = true;
       textarea.placeholder = 'Press Generate to create a shareable code…';
-      textarea.setAttribute('aria-label', 'Exported program code');
+      textarea.setAttribute('aria-labelledby', titleId);
       panel.appendChild(textarea);
 
       const btn = document.createElement('button');
@@ -2440,7 +2542,8 @@
 
     function createImportPanel(container) {
       const panel = el('div', 'lcars-panel');
-      panel.appendChild(panelHeader('MEM-04', 'Import Code'));
+      const { headerEl, titleId } = panelHeader('MEM-04', 'Import Code');
+      panel.appendChild(headerEl);
 
       const statusEl = el('div', 'tool-value tool-value--text', 'Paste a code below');
       panel.appendChild(statusEl);
@@ -2448,7 +2551,7 @@
       const textarea = document.createElement('textarea');
       textarea.className = 'tool-textarea';
       textarea.placeholder = 'Paste an exported code here…';
-      textarea.setAttribute('aria-label', 'Program code to import');
+      textarea.setAttribute('aria-labelledby', titleId);
       panel.appendChild(textarea);
 
       const btn = document.createElement('button');
