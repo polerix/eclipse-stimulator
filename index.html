@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>8-Orbital Occlusion Construct</title>
+  <title>Stellar Hierarchy Construct</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Antonio:wght@400;600;700&display=swap" rel="stylesheet">
@@ -11,9 +11,9 @@
     /* LCARS design tokens. Mirrored in JS as LCARS_PALETTE, which is the
        actual source of truth — it pushes these same values in here via
        setProperty() at startup, and reuses them for the 3D scene (selection
-       highlight, path markers) so the chrome and the construct itself read
-       as one consistent color system instead of two coincidentally-similar
-       palettes. The literals below are just the pre-JS fallback. */
+       highlight, object-type accents) so the chrome and the construct itself
+       read as one consistent color system instead of two coincidentally-
+       similar palettes. The literals below are just the pre-JS fallback. */
     :root {
       --lcars-butterscotch: #ff9c00;
       --lcars-african-violet: #cc99cc;
@@ -544,6 +544,11 @@
 
     .tool-text-button:hover { filter: brightness(1.15); }
 
+    .tool-text-button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
     .tool-textarea {
       box-sizing: border-box;
       width: 100%;
@@ -620,6 +625,43 @@
       text-transform: uppercase;
     }
 
+    /* Object chips (Objects tab): one per stellar body, colored by its own
+       type accent, plus a "+" chip to add a new one. */
+    .tool-object-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 2px;
+    }
+
+    .tool-object-chip {
+      padding: 6px 10px;
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border: 2px solid transparent;
+      border-radius: 14px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .tool-object-chip.is-focused { border-color: var(--lcars-alert); }
+
+    .tool-object-chip--add {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      font-size: 16px;
+      line-height: 1;
+      text-align: center;
+      border-radius: 50%;
+      background: var(--lcars-alert);
+      color: #000;
+      border-color: transparent;
+    }
+
     /* One consistent themed focus ring for every keyboard-reachable control,
        instead of leaving it to inconsistent browser defaults — and restoring
        it where .tool-slider/.tool-toggle removed the native outline entirely. */
@@ -635,6 +677,7 @@
     .tool-program-load:focus-visible,
     .tool-program-delete:focus-visible,
     .tool-textarea:focus-visible,
+    .tool-object-chip:focus-visible,
     .lcars-hud__selection-clear:focus-visible,
     .lcars-hud__audio-toggle:focus-visible {
       outline: 2px solid var(--lcars-alert);
@@ -686,116 +729,25 @@
 
   <script>
     // --- Application State & Parameters ---
+    // Feature pivot: floor/sky and the fixed Source+Runner model are gone.
+    // In their place, a dynamic, user-extensible hierarchy of stellar
+    // bodies — each one positioned and moved relative to whichever other
+    // body it's nested under, all the way up to a single fixed root. See
+    // OBJECT_TYPES and the Shared Gravity Law section below for how mass
+    // drives both the hierarchy and the actual simulated motion.
     const params = {
-      // Surface Colors (Strict 3-tone or custom)
-      surfaceColors: {
-        preset: 'Default (Black/Grey/White)',
-        inwardFace: '#ffffff',   // facing center
-        outwardFace: '#000000',  // facing away
-        parallelFaces: '#808080' // parallel to horizon & sides
-      },
-      // Orbit & Central Cog. Radius/Speed double as the seed for a real
-      // simulated gravity system now (see gravitationalParameter()) — see
-      // the Orbital Collision Avoidance / Gravity Simulation section.
-      orbit: {
-        radius: 35,
-        speed: 0.25,
-        count: 8,
-        cogSize: 1.0,
-        eccentricity: 0.2 // 0 = perfect circle, up to ~0.9 = stretched ellipse
-      },
-      // Orbiting Cubes Dimension
-      cube: {
-        sizeX: 6,
-        sizeY: 6,
-        sizeZ: 6,
-        proportionalLock: true,
-        uniformScale: 6
-      },
-      // Central Light Source
-      source: {
-        color: '#ffffff',
-        intensity: 2.0,
-        size: 1.5,
-        distance: 120,
-        decay: 1.0
-      },
-      // Runner
-      runner: {
-        shape: 'Rectifier',
-        size: 0.8,
-        path: {
-          // Waypoints the runner travels between, with Y expressed as
-          // height *above the current ground plane* rather than an
-          // absolute world Y — so Y: 0 always means "grounded, at the
-          // orbitals' bottom edge," and the whole path automatically
-          // re-lands if World Alignment or the orbitals' own height
-          // changes later. Always at least 2 nodes (start, end); "Path
-          // Nodes" inserts more in between.
-          nodes: [
-            { x: 0, y: 0, z: 60 }, // start
-            { x: 0, y: 0, z: 0 }   // end
-          ],
-          mode: 'Loop',    // 'Loop' | 'Play Once' | 'Boomerang'
-          corner: 'Square' // 'Square' | 'Round'
-        },
-        speed: 12.0,
-        color: '#000000',
-        active: true,
-        // Live sidestep around orbitals the path would otherwise cross —
-        // see the Orbital Collision Avoidance section, further down.
-        avoidance: true,
-        // 'Scripted Path' is everything above (nodes/mode/corner) exactly
-        // as before. 'Gravity Orbit' ignores the authored path entirely —
-        // the runner becomes a real physics body launched from `gravity`
-        // below and its trajectory emerges from the same gravity law that
-        // governs the orbitals, rather than being hand-drawn.
-        motionMode: 'Scripted Path', // 'Scripted Path' | 'Gravity Orbit'
-        gravity: {
-          startDistance: 50,        // launch distance from the source
-          startAngleDeg: 0,         // launch position, angle around the source
-          speedRatio: 0.7,          // launch speed ÷ local circular speed
-          // 0 = perfectly tangential (prograde) launch; ±90 = launched
-          // straight in/out. Combined with speedRatio this sweeps the full
-          // conic-section family — circular, elliptical, parabolic (right
-          // at speedRatio ≈ 1.414 tangential), hyperbolic — the same
-          // family Dr. Tyson was getting at with "the shape of its
-          // parabola."
-          launchAngleOffsetDeg: 0
-        }
-      },
-      // Camera Controls
       camera: {
         fov: 50,
-        trackingMode: 'Runner Tracking',
+        trackingMode: 'Free Orbit Overview', // 'Free Orbit Overview' | 'Follow Selected' | 'Static Origin View' | 'Manual Control'
         distance: 12,
         height: 3.5
       },
-      // World: the shared reference frame Floor and Sky are both anchored
-      // to, plus Floor & Sky themselves (identical option shape). Defaults
-      // reproduce the original hardcoded floor exactly, and default the
-      // sky to invisible, so the scene looks unchanged until touched.
-      world: {
-        alignment: 'Cube', // 'Source' | 'Cube' | 'XYZ'
-        offset: { x: 0, y: 0, z: 0 }, // used only when alignment is 'XYZ'
-        // Floor and sky always share one geometry — changing it snaps both
-        // at once, so the two never end up as mismatched shapes.
-        geometry: 'Square' // 'Square' | 'Radial' | 'Hemisphere' | 'Cube'
-      },
-      floor: {
-        size: 300,
-        surface: 'Color',     // 'Off' | 'Color' | 'Grid' | 'Image'
-        color: '#111111',
-        gridFrequency: 10,
-        gridSize: 2
-      },
-      sky: {
-        size: 400,
-        surface: 'Off',
-        color: '#0a0a1a',
-        gridFrequency: 10,
-        gridSize: 2
-      }
+      // Every stellar object: { id, name, type, parentId, mass, size,
+      // shape, color, orbit: { distance, speedRatio, angleDeg } }.
+      // parentId: null means "fixed at the universal center" — normally
+      // true of exactly one root object (e.g. the Sun). Populated with a
+      // default Terran solar system below, after OBJECT_TYPES is defined.
+      objects: []
     };
 
     // --- Memory: Save/Load Programs (persistence) ---
@@ -804,13 +756,18 @@
     // stringify. Loading works by writing the chosen snapshot into a
     // "pending load" slot and reloading the page: the very first thing this
     // script does on the next run (right here, before any 3D object or HUD
-    // control is built) is merge that snapshot onto the defaults above. That
-    // means every panel's *initial* value already reflects the loaded
-    // program — no separate "refresh every control" step needed anywhere.
-    // Uploaded custom runner models and floor/sky images aren't captured
-    // (their raw file bytes never touch `params`), so loading a program that
-    // used one falls back to that shape/surface's normal placeholder, same
-    // as picking it fresh without a file — never a crash, just a re-upload prompt.
+    // control is built) is merge that snapshot onto the defaults above.
+    // Uploaded custom object models aren't captured (their raw file bytes
+    // never touch `params`), so loading a program that used one falls back
+    // to that object's normal placeholder shape, same as picking "Custom"
+    // fresh without a file — never a crash, just a re-upload prompt.
+    //
+    // NOTE: this is a clean break from the previous Source/Orbit/Cube/
+    // Runner/Floor/Sky schema — programs saved before this rewrite will
+    // still *load* (deepMerge just won't find an `objects` array in them,
+    // so nothing overwrites the fresh default solar system below), but
+    // they won't restore whatever scene they used to represent. There's no
+    // way to bridge that automatically since the whole data model changed.
     const MEMORY_KEY = 'eclipseStimulator.savedPrograms';
     const PENDING_LOAD_KEY = 'eclipseStimulator.pendingLoad';
 
@@ -839,6 +796,8 @@
       return target;
     }
 
+    let pendingObjectsLoad = null; // captured here, applied after OBJECT_TYPES/defaults exist
+
     (function applyPendingLoad() {
       let pending = null;
       try {
@@ -849,6 +808,7 @@
       if (!pending) return;
       safeLocalStorageRemove(PENDING_LOAD_KEY);
       deepMerge(params, pending);
+      if (Array.isArray(pending.objects) && pending.objects.length) pendingObjectsLoad = pending.objects;
     })();
 
     function snapshotParams() {
@@ -895,23 +855,45 @@
       }
     }
 
+    // The Source/Orbit/Runner/Floor/Sky schema this replaced has no
+    // `objects` array — a save from before that rewrite would load without
+    // crashing (deepMerge just wouldn't find one) but would silently show
+    // the default solar system instead of whatever it used to represent,
+    // which is confusing to leave sitting in the saved-programs list. Prune
+    // those out once, up front, so Stored Programs only ever lists saves
+    // this schema can actually restore. Idempotent — a no-op once run.
+    function pruneLegacyPrograms() {
+      const programs = listPrograms();
+      let changed = false;
+      Object.keys(programs).forEach(name => {
+        const snap = programs[name];
+        if (!snap || !Array.isArray(snap.objects) || snap.objects.length === 0) {
+          delete programs[name];
+          changed = true;
+        }
+      });
+      if (changed) safeLocalStorageSet(MEMORY_KEY, JSON.stringify(programs));
+    }
+    pruneLegacyPrograms();
+
     // --- LCARS Design Tokens ---
     // One named palette, reused everywhere a "which category is this"
     // color decision gets made — the tab accents, the selection highlight,
-    // and the 3D path markers all read from here instead of each carrying
-    // its own coincidentally-similar hex literal. Pushed onto :root as CSS
-    // custom properties so the static chrome (hint pill, HUD title,
-    // selection bar) consumes the exact same values as the JS-built tabs.
+    // and several object-type accents all read from here instead of each
+    // carrying its own coincidentally-similar hex literal. Pushed onto
+    // :root as CSS custom properties so the static chrome (hint pill, HUD
+    // title, selection bar) consumes the exact same values as the JS-built
+    // tabs.
     const LCARS_PALETTE = {
-      butterscotch: '#ff9c00',  // Source tab + summon hint
-      africanViolet: '#cc99cc', // Orbit tab
-      periwinkle: '#9999ff',    // Orbital tab
-      gold: '#ffcc66',          // Surface tab + intermediate path nodes
-      mars: '#ff6666',          // Runner tab + path endpoints
-      ice: '#66ccff',           // Camera tab
-      salmon: '#ff9977',        // World tab (floor & sky)
-      plum: '#cc6699',          // Memory tab (save/load)
-      alert: '#33ffff'          // Selection highlight + path preview line
+      butterscotch: '#ff9c00',  // HUD title bar + summon hint + Sun accent
+      africanViolet: '#cc99cc', // (reserved accent)
+      periwinkle: '#9999ff',    // Objects tab
+      gold: '#ffcc66',          // (reserved accent)
+      mars: '#ff6666',          // Satellite accent
+      ice: '#66ccff',           // Camera tab + Planet accent
+      salmon: '#ff9977',        // Asteroid accent
+      plum: '#cc6699',          // Memory tab + Individual accent
+      alert: '#33ffff'          // Selection highlight + focused object chip
     };
 
     function hexToNum(hex) {
@@ -942,7 +924,7 @@
       params.camera.fov,
       window.innerWidth / window.innerHeight,
       0.1,
-      1000
+      2000
     );
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -952,390 +934,43 @@
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(renderer.domElement);
 
-    // --- Central Light & Mesh ---
-    const centralPointLight = new THREE.PointLight(
-      params.source.color,
-      params.source.intensity,
-      params.source.distance,
-      params.source.decay
-    );
-    centralPointLight.castShadow = true;
-    centralPointLight.shadow.mapSize.width = 2048;
-    centralPointLight.shadow.mapSize.height = 2048;
-    centralPointLight.shadow.bias = -0.001;
-    scene.add(centralPointLight);
-
-    const sourceMeshGeo = new THREE.SphereGeometry(params.source.size, 32, 16);
-    const sourceMeshMat = new THREE.MeshBasicMaterial({ color: params.source.color });
-    const sourceMesh = new THREE.Mesh(sourceMeshGeo, sourceMeshMat);
-    scene.add(sourceMesh);
-
-    // Ambient fill to keep absolute non-lit areas legible if desired
+    // Dim ambient fill so non-illuminated areas (anything not near a Sun)
+    // are still faintly legible instead of pure black.
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.05);
     scene.add(ambientLight);
 
-    // --- Floor & Sky ---
-    // Floor and sky share one option shape (geometry + surface) and are
-    // built by the same code, just mirrored: floor sits at the construct's
-    // ground level, sky wraps around/above it. `kind` is 'floor' or 'sky'
-    // throughout this section.
-    let floorMesh = null;
-    let skyMesh = null;
-    let floorImageTexture = null;
-    let skyImageTexture = null;
-
-    function groundConfig(kind) {
-      return kind === 'sky' ? params.sky : params.floor;
-    }
-
-    // Where Floor and Sky are both anchored, per params.world.alignment:
-    //   Source  — the fixed point everything else is built around (origin)
-    //   Orbital — derived from the orbiting entities' current height
-    //             (default, matches the construct's original hardcoded
-    //             floor). Still stored/compared as the value 'Cube' below —
-    //             only its displayed label changed to 'Orbital' in the HUD,
-    //             so saved/exported programs from before the rename keep
-    //             working unmodified.
-    //   XYZ     — fully manual, no dependency on any other entity
-    function computeWorldAnchor() {
-      switch (params.world.alignment) {
-        case 'Source':
-          return { x: 0, y: 0, z: 0 };
-        case 'XYZ':
-          return { x: params.world.offset.x, y: params.world.offset.y, z: params.world.offset.z };
-        case 'Cube':
-        default:
-          return { x: 0, y: -params.cube.sizeY / 2, z: 0 };
-      }
-    }
-
-    // The runner's path is authored in height-above-ground terms (see the
-    // path.nodes comment below), so anywhere the runner/its path preview is
-    // actually placed in world space needs to add this — the same anchor
-    // height Floor and Sky already build on, kept as one function so all
-    // three entities can never drift apart onto different ground planes.
-    function groundLevelY() {
-      return computeWorldAnchor().y;
-    }
-
-    function buildGroundGeometry(type, size) {
-      switch (type) {
-        case 'Radial': return new THREE.CircleGeometry(size / 2, 64);
-        case 'Hemisphere': return new THREE.SphereGeometry(size / 2, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2);
-        case 'Cube': return new THREE.BoxGeometry(size, size, size);
-        case 'Square':
-        default: return new THREE.PlaneGeometry(size, size);
-      }
-    }
-
-    // Draws a single tile's border into a small canvas and tiles it via
-    // texture.repeat — works on curved geometry too, unlike a flat line
-    // helper, so the same grid surface applies to a dome or a skybox. Used
-    // for every geometry except Radial, whose disc UVs don't map onto a
-    // repeating square tile sensibly (see buildRadialGridGroup below).
-    function createGridTexture(color, lineWidthPx) {
-      const res = 128;
-      const canvas = document.createElement('canvas');
-      canvas.width = res;
-      canvas.height = res;
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, res, res);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidthPx;
-      ctx.strokeRect(0, 0, res, res);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.wrapT = THREE.RepeatWrapping;
-      return texture;
-    }
-
-    function buildSurfaceMaterial(config, isSky, imageTexture) {
-      // Sky is viewed from inside (BackSide, like a skybox); floor is
-      // viewed from above/outside (DoubleSide, cheap insurance either way).
-      const side = isSky ? THREE.BackSide : THREE.DoubleSide;
-      // Lambert (not Basic) for every surface style, Grid and Image
-      // included — Basic ignores lighting entirely, so even though the
-      // orbitals and the central light were already fully wired for
-      // shadows (castShadow/receiveShadow + a real shadow map), a Grid or
-      // Image floor never actually displayed a shadow falling on it. Only
-      // the default flat-Color surface happened to use a light-responsive
-      // material before this.
-      let material;
-      if (config.surface === 'Grid') {
-        const tex = createGridTexture(config.color, config.gridSize);
-        tex.repeat.set(config.gridFrequency, config.gridFrequency);
-        material = new THREE.MeshLambertMaterial({ map: tex, transparent: true, side });
-      } else if (config.surface === 'Image' && imageTexture) {
-        material = new THREE.MeshLambertMaterial({ map: imageTexture, side });
-      } else {
-        // 'Color', or 'Image' with nothing uploaded yet — same flat-color
-        // fallback used by the runner's Custom shape before a model loads
-        material = new THREE.MeshLambertMaterial({ color: config.color, side });
-      }
-      // Hemisphere and Cube world geometries put the sky's surface exactly
-      // coincident with the floor's where they meet (the dome rims, or the
-      // box faces, land on the same plane) — a depth-buffer tie that
-      // flickers (z-fights) regardless of surface style, since the
-      // conflict is geometric, not material. A polygon-offset depth bias on
-      // the sky — instead of physically moving either mesh — resolves the
-      // tie with no visible seam or gap: the two surfaces stay exactly
-      // where they're placed, but the GPU now has a tiebreaker.
-      if (isSky) {
-        material.polygonOffset = true;
-        material.polygonOffsetFactor = 1;
-        material.polygonOffsetUnits = 1;
-      }
-      return material;
-    }
-
-    // Y height for a flat (Square/Radial) surface, relative to the world
-    // anchor — shared by the mesh itself and the radial grid overlay below
-    // so the two always land on the same plane.
-    function flatSurfaceY(anchor, config, isSky) {
-      return isSky ? anchor.y + config.size * 0.6 : anchor.y;
-    }
-
-    function positionGroundMesh(mesh, config, isSky) {
-      const anchor = computeWorldAnchor();
-      switch (params.world.geometry) {
-        case 'Hemisphere':
-          // Floor: bowl opening upward (flip the dome). Sky: dome rising
-          // from ground level, camera-friendly BackSide handles the inside
-          // view. Its rim lands exactly on the floor bowl's rim by design —
-          // see the polygonOffset note in buildSurfaceMaterial for how that
-          // coincidence is kept from z-fighting without a visible gap.
-          mesh.rotation.x = isSky ? 0 : Math.PI;
-          mesh.rotation.z = 0;
-          mesh.position.set(anchor.x, anchor.y, anchor.z);
-          break;
-        case 'Cube':
-          mesh.rotation.set(0, 0, 0);
-          // Floor: top face at the anchor (a solid platform underneath).
-          // Sky: box centered above, anchor to roof, enclosing the scene —
-          // its underside lands exactly on the floor's top face by design;
-          // see the polygonOffset note in buildSurfaceMaterial.
-          mesh.position.set(anchor.x, isSky ? anchor.y + config.size / 2 : anchor.y - config.size / 2, anchor.z);
-          break;
-        case 'Square':
-        case 'Radial':
-        default:
-          mesh.rotation.set(-Math.PI / 2, 0, 0);
-          mesh.position.set(anchor.x, flatSurfaceY(anchor, config, isSky), anchor.z);
-          break;
-      }
-    }
-
-    // Radial + Grid gets its own exact geometry instead of a texture: a
-    // disc's default UVs are a planar (not polar) projection, so tiling a
-    // square-tile texture over it produces a warped, off-center pattern —
-    // it conflicts with the shape instead of describing it. Building actual
-    // concentric ring/spoke lines is exact at any radius and trivially
-    // "centered on the origin" and "spoke aligned with Z" by construction:
-    // in the (x, z) = (cos, sin) plane, angle 0 is +X and angle PI/2 is +Z,
-    // so starting the spoke sweep at PI/2 puts the first spoke on the Z axis.
-    function buildRadialGridGroup(config) {
-      const ringCount = Math.max(1, Math.round(config.gridFrequency));
-      const spokeCount = Math.max(1, Math.round(config.gridFrequency));
-      const maxRadius = config.size / 2;
-      const segments = 64;
-      const material = new THREE.LineBasicMaterial({
-        color: config.color,
-        linewidth: config.gridSize,
-        transparent: true,
-        opacity: 0.7
-      });
-
-      const group = new THREE.Group();
-
-      // Concentric rings, evenly spaced by radius
-      for (let i = 1; i <= ringCount; i++) {
-        const r = (i / ringCount) * maxRadius;
-        const points = [];
-        for (let s = 0; s <= segments; s++) {
-          const a = (s / segments) * Math.PI * 2;
-          points.push(new THREE.Vector3(r * Math.cos(a), 0, r * Math.sin(a)));
-        }
-        group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
-      }
-
-      // Radial spokes from center to edge, evenly spaced by angle, first one on +Z
-      for (let j = 0; j < spokeCount; j++) {
-        const a = Math.PI / 2 + j * ((Math.PI * 2) / spokeCount);
-        const points = [
-          new THREE.Vector3(0, 0, 0),
-          new THREE.Vector3(maxRadius * Math.cos(a), 0, maxRadius * Math.sin(a))
-        ];
-        group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
-      }
-
-      return group;
-    }
-
-    function positionRadialGridGroup(group, config, isSky) {
-      const anchor = computeWorldAnchor();
-      group.position.set(anchor.x, flatSurfaceY(anchor, config, isSky), anchor.z);
-    }
-
-    let floorRadialGrid = null;
-    let skyRadialGrid = null;
-
-    function disposeRadialGrid(kind) {
-      const group = kind === 'sky' ? skyRadialGrid : floorRadialGrid;
-      if (!group) return;
-      scene.remove(group);
-      const sharedMaterial = group.children[0] && group.children[0].material;
-      group.children.forEach(line => line.geometry.dispose());
-      if (sharedMaterial) sharedMaterial.dispose();
-      if (kind === 'sky') skyRadialGrid = null; else floorRadialGrid = null;
-    }
-
-    function rebuildGroundMesh(kind) {
-      const isSky = kind === 'sky';
-      const config = groundConfig(kind);
-      const old = isSky ? skyMesh : floorMesh;
-      const persistentTex = isSky ? skyImageTexture : floorImageTexture;
-      const isRadialGrid = params.world.geometry === 'Radial' && config.surface === 'Grid';
-
-      if (old) {
-        scene.remove(old);
-        old.geometry.dispose();
-        if (old.material.map && old.material.map !== persistentTex) old.material.map.dispose();
-        old.material.dispose();
-      }
-      disposeRadialGrid(kind);
-
-      const geometry = buildGroundGeometry(params.world.geometry, config.size);
-      // Radial's own Grid is drawn as line geometry instead (see above), so
-      // the disc itself just goes invisible rather than wearing a wasted texture.
-      const material = isRadialGrid
-        ? new THREE.MeshBasicMaterial({ visible: false })
-        : buildSurfaceMaterial(config, isSky, persistentTex);
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.visible = config.surface !== 'Off' && !isRadialGrid;
-      mesh.receiveShadow = !isSky;
-      mesh.castShadow = false;
-      positionGroundMesh(mesh, config, isSky);
-
-      scene.add(mesh);
-      if (isSky) skyMesh = mesh; else floorMesh = mesh;
-
-      if (isRadialGrid) {
-        const group = buildRadialGridGroup(config);
-        positionRadialGridGroup(group, config, isSky);
-        scene.add(group);
-        if (isSky) skyRadialGrid = group; else floorRadialGrid = group;
-      }
-    }
-
-    // Cheap re-layout for when only the construct's height changed (dragging
-    // the Cube dimension sliders fires continuously; a full geometry/material
-    // rebuild on every tick would be wasteful, repositioning is nearly free).
-    function repositionGroundMeshes() {
-      if (floorMesh) positionGroundMesh(floorMesh, params.floor, false);
-      if (skyMesh) positionGroundMesh(skyMesh, params.sky, true);
-      if (floorRadialGrid) positionRadialGridGroup(floorRadialGrid, params.floor, false);
-      if (skyRadialGrid) positionRadialGridGroup(skyRadialGrid, params.sky, true);
-      // The runner's path is stored height-above-ground, so whenever the
-      // ground itself moves (Cube dimension change, World Alignment/Offset
-      // change) the path markers and preview line need repositioning too,
-      // or they'd visually drift away from where the runner actually runs.
-      if (pathSampler) syncPath();
-    }
-
-    function loadGroundImage(kind, file) {
-      const reader = new FileReader();
-      reader.onload = e => {
-        new THREE.TextureLoader().load(e.target.result, texture => {
-          texture.wrapS = THREE.RepeatWrapping;
-          texture.wrapT = THREE.RepeatWrapping;
-          if (kind === 'sky') {
-            if (skyImageTexture) skyImageTexture.dispose();
-            skyImageTexture = texture;
-          } else {
-            if (floorImageTexture) floorImageTexture.dispose();
-            floorImageTexture = texture;
-          }
-          rebuildGroundMesh(kind);
-        });
-      };
-      reader.readAsDataURL(file);
-    }
-
-    rebuildGroundMesh('floor');
-    rebuildGroundMesh('sky');
-
-    // --- Cube Materials Construction ---
-    // Standard BoxGeometry material array order: [+X, -X, +Y, -Y, +Z, -Z]
-    // In local space: +Z points outwards away from center, -Z points inwards toward center
-    //
-    // All three orientations use the same light-responsive material family
-    // (MeshStandardMaterial) — only the inward face used to. The outward
-    // and parallel faces were MeshBasicMaterial, which ignores the central
-    // light entirely: same flat color at any Source Intensity/Range, no
-    // shading gradient, no shadow. For a construct whose whole premise is
-    // faces occluding/reflecting a central source, that meant 5 of every
-    // orbital's 6 faces had no relationship to the light at all. Each face
-    // still gets its own strict, independently assigned color exactly as
-    // before (see the surfaceColors params/panels) — this only makes that
-    // assigned color actually respond to the light hitting it, the same
-    // fix already applied to the floor/sky surfaces.
-    function createCubeMaterials() {
-      const matInward = new THREE.MeshStandardMaterial({
-        color: params.surfaceColors.inwardFace,
-        roughness: 0.2,
-        metalness: 0.1
-      });
-      const matOutward = new THREE.MeshStandardMaterial({
-        color: params.surfaceColors.outwardFace,
-        roughness: 0.2,
-        metalness: 0.1
-      });
-      const matParallel = new THREE.MeshStandardMaterial({
-        color: params.surfaceColors.parallelFaces,
-        roughness: 0.2,
-        metalness: 0.1
-      });
-
-      return [
-        matParallel, // +X (side)
-        matParallel, // -X (side)
-        matParallel, // +Y (top parallel to horizon)
-        matParallel, // -Y (bottom parallel to horizon)
-        matOutward,  // +Z (facing outward away from source)
-        matInward    // -Z (facing inward directly towards central source)
-      ];
-    }
-
-    let cubeMaterials = createCubeMaterials();
+    // --- Object Types ---
+    // Purely a display/organizational label plus sensible starting values —
+    // the physics only ever cares about an object's mass/parent/orbit, not
+    // its type. massRange/sizeRange bound that type's Mass/Size sliders
+    // (a Moon and a Sun don't want the same slider resolution).
+    const OBJECT_TYPES = {
+      SINGULARITY: { label: 'Singularity', color: '#180022', massRange: [1000, 20000], sizeRange: [1, 10], defaultMass: 8000, defaultSize: 3, defaultShape: 'Sphere' },
+      SUN:         { label: 'Sun', color: LCARS_PALETTE.butterscotch, massRange: [500, 6000], sizeRange: [3, 15], defaultMass: 3000, defaultSize: 9, defaultShape: 'Sphere' },
+      PLANET:      { label: 'Planet', color: LCARS_PALETTE.ice, massRange: [5, 400], sizeRange: [0.4, 4], defaultMass: 43, defaultSize: 1.0, defaultShape: 'Sphere' },
+      MOON:        { label: 'Moon', color: '#a8a8a8', massRange: [0.5, 50], sizeRange: [0.1, 1.5], defaultMass: 10, defaultSize: 0.3, defaultShape: 'Sphere' },
+      ASTEROID:    { label: 'Asteroid', color: LCARS_PALETTE.salmon, massRange: [0.1, 20], sizeRange: [0.1, 1], defaultMass: 5, defaultSize: 0.25, defaultShape: 'Prism' },
+      SHIP:        { label: 'Ship', color: '#e0e0e0', massRange: [0.01, 20], sizeRange: [0.3, 3], defaultMass: 3, defaultSize: 0.9, defaultShape: 'Starship' },
+      SATELLITE:   { label: 'Artificial Satellite', color: LCARS_PALETTE.mars, massRange: [0.01, 10], sizeRange: [0.1, 1], defaultMass: 2, defaultSize: 0.3, defaultShape: 'Prism' },
+      INDIVIDUAL:  { label: 'Individual', color: LCARS_PALETTE.plum, massRange: [0.001, 5], sizeRange: [0.05, 0.5], defaultMass: 0.5, defaultSize: 0.15, defaultShape: 'Cube' }
+    };
+    const OBJECT_TYPE_ORDER = ['SINGULARITY', 'SUN', 'PLANET', 'MOON', 'ASTEROID', 'SHIP', 'SATELLITE', 'INDIVIDUAL'];
+    const OBJECT_TYPE_LABELS = Object.fromEntries(OBJECT_TYPE_ORDER.map(t => [t, OBJECT_TYPES[t].label]));
 
     // --- Shared Gravity Law ---
-    // Dr. Tyson's review: the orbitals and the Runner's trajectory should
-    // conform to one shared law of gravity instead of each moving by its
-    // own disconnected rule, and every entity should be positioned
-    // relative to the center of the (gravitational) sphere — the source,
-    // fixed at the world origin. This is that one law: a single
-    // gravitational parameter (mu, ~ G·M) derived from the existing Orbit
-    // tab controls, referenced by both the orbitals (below) and the
-    // Runner's Gravity Orbit motion mode (see the Runner section). mu is
-    // chosen so a purely tangential launch at the configured Orbit Radius
-    // and Orbit Speed traces a circular orbit — the existing sliders stay
-    // the intuitive "seed" for the system, even though everything that
-    // happens after seeding is now real simulated 2-body gravity instead
-    // of a fixed rotation. Deliberately planar (XZ, y=0) rather than fully
-    // 3D — the orbitals keep the flat "central cog" identity the rest of
-    // the HUD (Cog System Scale) already commits to, and the Runner's
-    // Gravity Orbit mode shares that same plane so it can actually pass
-    // through the orbit ring (and stay subject to Orbital Avoidance)
-    // instead of simulating a disconnected 3D swarm.
-    function gravitationalParameter() {
-      return Math.max(0.5, Math.pow(params.orbit.speed, 2) * Math.pow(params.orbit.radius, 3));
-    }
-
-    // One physics substep: symplectic (semi-implicit) Euler — velocity is
-    // updated from the *current* position's acceleration first, then
-    // position is advanced with the *new* velocity. Far more stable over
-    // many orbits than naive Euler (which visibly spirals outward over
-    // time) at effectively no extra cost.
+    // Every object orbits whichever object is its `parentId` (or sits fixed
+    // at the universal center if it has none) — a patched, hierarchical
+    // 2-body model (each object only ever feels its own immediate parent's
+    // pull, not every other object's) rather than full N-body gravity. This
+    // is the standard simplified technique real solar-system toys and games
+    // use, and it's exactly what "nested by mass, to its logical hierarchy"
+    // means mechanically: a parent's `mass` directly becomes the
+    // gravitational parameter (mu, ~ G·M with G = 1 in these sim units)
+    // pulling on every child orbiting it. Deliberately planar (XZ, y=0) —
+    // every orbit lives in its parent's local XZ plane — which still
+    // produces rich compound motion once orbits are nested (a moon loops
+    // around a moving planet), without the complexity of independent 3D
+    // orbital planes.
     function gravityStep(state, dt, mu) {
       const distSq = state.x * state.x + state.z * state.z;
       const dist = Math.sqrt(distSq) || 0.0001;
@@ -1347,8 +982,11 @@
     }
 
     // Real per-frame deltas can be too coarse for stable integration close
-    // to the source; subdividing into small fixed substeps keeps orbits
-    // numerically well-behaved regardless of frame rate.
+    // to a massive parent; subdividing into small fixed substeps keeps
+    // orbits numerically well-behaved regardless of frame rate. Symplectic
+    // (semi-implicit) Euler — velocity updates from the *current* position's
+    // acceleration first, then position advances with the *new* velocity —
+    // stays stable over many orbits instead of visibly spiraling.
     const GRAVITY_SUBSTEP = 1 / 240;
     function integrateGravity(state, totalDt, mu) {
       let remaining = totalDt;
@@ -1359,145 +997,71 @@
       }
     }
 
-    // Kepler's third law, for the orbital period of a given semi-major axis.
-    function orbitalPeriod(semiMajorAxis, mu) {
-      return 2 * Math.PI * Math.sqrt(Math.pow(semiMajorAxis, 3) / mu);
+    // Seeds an orbit state at `distance` from a parent of gravitational
+    // parameter mu, at the given starting angle, launched tangentially
+    // (perpendicular to the radius — the standard prograde launch) at
+    // speedRatio × the local circular speed. speedRatio alone sweeps the
+    // whole conic-section family: <1 falls inward from an apoapsis start,
+    // 1 is a perfect circle, up to ~1.41 increasingly eccentric, ~1.41 is
+    // the literal parabolic escape threshold, beyond that hyperbolic.
+    function seedOrbitState(mu, distance, angleDeg, speedRatio) {
+      const angle = angleDeg * Math.PI / 180;
+      const x = Math.cos(angle) * distance;
+      const z = Math.sin(angle) * distance;
+      const vCircular = Math.sqrt(mu / distance);
+      const speed = speedRatio * vCircular;
+      const tangentAngle = angle + Math.PI / 2;
+      return { x, z, vx: Math.cos(tangentAngle) * speed, vz: Math.sin(tangentAngle) * speed };
     }
 
-    // Seeds one body's (position, velocity) state on the ellipse defined by
-    // periapsis radius r0 and eccentricity e — starting purely tangential
-    // at periapsis (the vis-viva speed for that point), then fast-forwards
-    // it along that same real trajectory by a fraction of the orbital
-    // period, using the exact same integrator that runs every frame. That
-    // means N bodies sharing one physical ellipse, seeded at even
-    // *phaseFraction* steps, end up evenly spaced in time rather than in
-    // raw angle — matching how real orbiting bodies actually distribute
-    // (Kepler's second law: faster near periapsis, slower near apoapsis).
-    function seedGravityState(mu, r0, eccentricity, direction, phaseFraction) {
-      const v0 = Math.sqrt(mu * (1 + eccentricity) / r0);
-      const state = { x: r0, z: 0, vx: 0, vz: direction * v0 };
-      const semiMajorAxis = r0 / (1 - eccentricity);
-      const period = orbitalPeriod(semiMajorAxis, mu);
-      integrateGravity(state, phaseFraction * period, mu);
-      return state;
-    }
-
-    // --- Orbiting Group & Cubes ---
-    const orbitGroup = new THREE.Group();
-    scene.add(orbitGroup);
-
-    const cubes = [];
-    const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
-
-    function buildOrbitingCubes() {
-      // Clear existing
-      while (orbitGroup.children.length > 0) {
-        orbitGroup.remove(orbitGroup.children[0]);
-      }
-      cubes.length = 0;
-
-      const count = params.orbit.count;
-      const mu = gravitationalParameter();
-      const direction = params.orbit.speed < 0 ? -1 : 1;
-
-      for (let i = 0; i < count; i++) {
-        const mesh = new THREE.Mesh(cubeGeo, cubeMaterials);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-
-        // Each orbital carries its own simulated (position, velocity)
-        // state — no longer a fixed angle on a rigidly rotating group,
-        // since an elliptical orbit's angular rate isn't constant.
-        const state = seedGravityState(mu, params.orbit.radius, params.orbit.eccentricity, direction, i / count);
-        mesh.userData.gState = state;
-        mesh.position.set(state.x, 0, state.z);
-
-        // Orient box so -Z faces the origin (0, 0, 0)
-        mesh.lookAt(0, 0, 0);
-
-        // Apply scale
-        mesh.scale.set(params.cube.sizeX, params.cube.sizeY, params.cube.sizeZ);
-
-        orbitGroup.add(mesh);
-        cubes.push(mesh);
+    // --- Object Visuals ---
+    // Built at a canonical "1 unit" scale, then the object's own Size is
+    // applied as a uniform scale multiplier on the whole root — one
+    // consistent sizing mechanism for every shape, single mesh or composite.
+    function buildShapeGeometry(shape) {
+      switch (shape) {
+        case 'Sphere': return new THREE.SphereGeometry(0.5, 24, 16);
+        case 'Prism': return new THREE.CylinderGeometry(0.5, 0.5, 1, 6); // hexagonal prism
+        case 'Cube':
+        default: return new THREE.BoxGeometry(1, 1, 1);
       }
     }
 
-    buildOrbitingCubes();
+    // A stylized saucer/engineering-hull/twin-nacelle silhouette — built
+    // from primitives, not a real Enterprise model (no such asset is
+    // available here to load). Reads as "a starship" at a glance without
+    // claiming to be a faithful reproduction.
+    function buildStarshipGroup(color) {
+      const group = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.35 });
 
-    // --- Runner Entity ---
-    const runnerGroup = new THREE.Group();
-    scene.add(runnerGroup);
+      const saucer = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.12, 24), mat);
+      saucer.position.set(0, 0.15, 0.3);
+      group.add(saucer);
 
-    const runnerBodyMat = new THREE.MeshStandardMaterial({
-      color: params.runner.color,
-      roughness: 0.4
-    });
-    const limbMat = new THREE.MeshStandardMaterial({ color: params.runner.color });
+      const hull = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 0.9, 12), mat);
+      hull.rotation.x = Math.PI / 2;
+      hull.position.set(0, 0, -0.15);
+      group.add(hull);
 
-    // The runner's visual can be swapped between a few built-in shapes or a
-    // user-supplied STL/OBJ model. `runnerMeshes` always holds every mesh
-    // belonging to the *current* shape (for raycasting/selection); `runnerLegs`
-    // is only populated for the articulated Rectifier shape (for leg-swing).
-    let runnerMeshes = [];
-    let runnerLegs = null;
-    let lastCustomObject = null; // cache so re-selecting "Custom" doesn't require re-upload
+      [-1, 1].forEach(side => {
+        const nacelle = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.8, 10), mat);
+        nacelle.rotation.x = Math.PI / 2;
+        nacelle.position.set(side * 0.35, 0.05, -0.05);
+        group.add(nacelle);
 
-    function clearRunnerVisual() {
-      while (runnerGroup.children.length > 0) {
-        const child = runnerGroup.children[0];
-        runnerGroup.remove(child);
-        child.traverse(node => {
-          if (node.geometry && node.geometry.dispose) node.geometry.dispose();
-        });
-      }
-      runnerMeshes = [];
-      runnerLegs = null;
-    }
+        const strut = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.3), mat);
+        strut.position.set(side * 0.2, 0.05, 0.05);
+        group.add(strut);
+      });
 
-    function buildRectifierRunner() {
-      clearRunnerVisual();
-      const torsoGeo = new THREE.BoxGeometry(0.8, 1.2, 0.5);
-      const torso = new THREE.Mesh(torsoGeo, runnerBodyMat);
-      torso.castShadow = true;
-      torso.position.y = 1.2;
-      runnerGroup.add(torso);
-
-      const legGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3);
-      const leftLeg = new THREE.Mesh(legGeo, limbMat);
-      leftLeg.position.set(-0.25, 0.4, 0);
-      leftLeg.castShadow = true;
-      runnerGroup.add(leftLeg);
-
-      const rightLeg = new THREE.Mesh(legGeo, limbMat);
-      rightLeg.position.set(0.25, 0.4, 0);
-      rightLeg.castShadow = true;
-      runnerGroup.add(rightLeg);
-
-      runnerMeshes = [torso, leftLeg, rightLeg];
-      runnerLegs = { left: leftLeg, right: rightLeg };
-    }
-
-    function buildSphereRunner() {
-      clearRunnerVisual();
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.6, 24, 16), runnerBodyMat);
-      mesh.castShadow = true;
-      mesh.position.y = 0.6;
-      runnerGroup.add(mesh);
-      runnerMeshes = [mesh];
-    }
-
-    function buildCubeRunner() {
-      clearRunnerVisual();
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), runnerBodyMat);
-      mesh.castShadow = true;
-      mesh.position.y = 0.5;
-      runnerGroup.add(mesh);
-      runnerMeshes = [mesh];
+      return group;
     }
 
     // Normalizes a loaded STL/OBJ object (any size/origin/units) to sit
-    // centered on the ground at a size comparable to the built-in shapes.
+    // centered at local origin at a size comparable to the built-in shapes,
+    // so the caller's uniform Size scale-multiplier behaves consistently
+    // whether the shape is a primitive or an uploaded model.
     function normalizeCustomObject(object3D) {
       const box = new THREE.Box3().setFromObject(object3D);
       const size = new THREE.Vector3();
@@ -1507,86 +1071,316 @@
       const maxDim = Math.max(size.x, size.y, size.z) || 1;
       const scale = 1.4 / maxDim;
       object3D.scale.setScalar(scale);
-      object3D.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+      object3D.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
     }
 
-    function attachCustomRunnerObject(object3D) {
-      clearRunnerVisual();
-      object3D.traverse(node => {
-        if (node.isMesh) {
-          node.material = runnerBodyMat;
-          node.castShadow = true;
-          runnerMeshes.push(node);
-        }
-      });
-      runnerGroup.add(object3D);
-    }
+    const objectRuntime = new Map();   // id -> { root, allMeshes, light, gState, config }
+    const meshToObjectId = new Map();  // THREE.Mesh -> object id, for selection raycasting
+    const customModelCache = new Map(); // id -> uploaded THREE.Object3D template to clone from
 
-    function buildCustomRunner(freshObject3D) {
-      normalizeCustomObject(freshObject3D);
-      lastCustomObject = freshObject3D;
-      attachCustomRunnerObject(freshObject3D);
-    }
-
-    function buildRunnerShape(shape) {
-      if (shape === 'Rectifier') buildRectifierRunner();
-      else if (shape === 'Sphere') buildSphereRunner();
-      else if (shape === 'Cube') buildCubeRunner();
-      else if (shape === 'Custom') {
-        if (lastCustomObject) attachCustomRunnerObject(lastCustomObject.clone(true));
-        else buildCubeRunner(); // placeholder until a model is uploaded
-      }
-    }
-
-    function applyRunnerShape(shape) {
-      buildRunnerShape(shape);
-      clearSelection();
-    }
-
-    // Respects a loaded program's shape instead of always starting as
-    // Rectifier — buildRunnerShape() (not applyRunnerShape()) because
-    // clearSelection() reaches into selection/HUD state that isn't
-    // constructed yet this early in the script, and there's nothing
-    // selected at startup to clear anyway.
-    buildRunnerShape(params.runner.shape);
-
-    // STL / OBJ loading for the "Custom" runner shape
     const stlLoader = new THREE.STLLoader();
     const objLoader = new THREE.OBJLoader();
 
-    function loadCustomRunnerFile(file) {
+    // Attaches a warm-white point light to a Sun-type object, so it moves
+    // with it automatically (added as its own child, not the scene's) —
+    // the one place this construct still casts real shadows from. A
+    // Singularity deliberately does *not* get one (see buildObjectVisual).
+    function attachLightIfSun(root, obj) {
+      if (obj.type !== 'SUN') return null;
+      const light = new THREE.PointLight(0xfff4e0, 2.0, 500, 1.0);
+      light.castShadow = true;
+      light.shadow.mapSize.width = 2048;
+      light.shadow.mapSize.height = 2048;
+      light.shadow.bias = -0.001;
+      root.add(light);
+      return light;
+    }
+
+    function buildObjectVisual(obj) {
+      let root;
+      if (obj.shape === 'Starship') {
+        root = buildStarshipGroup(obj.color);
+      } else if (obj.shape === 'Custom') {
+        const template = customModelCache.get(obj.id);
+        if (template) {
+          root = template.clone(true);
+          normalizeCustomObject(root);
+        } else {
+          // Placeholder until a model is uploaded — never a crash, just a re-upload prompt.
+          root = new THREE.Mesh(buildShapeGeometry('Cube'), new THREE.MeshStandardMaterial({ color: obj.color, roughness: 0.4, metalness: 0.15 }));
+        }
+      } else if (obj.type === 'SINGULARITY') {
+        // Unlit on purpose — a black hole doesn't reflect or emit light,
+        // the opposite of the Sun's attached PointLight above.
+        root = new THREE.Mesh(buildShapeGeometry(obj.shape), new THREE.MeshBasicMaterial({ color: obj.color }));
+      } else {
+        root = new THREE.Mesh(buildShapeGeometry(obj.shape), new THREE.MeshStandardMaterial({ color: obj.color, roughness: 0.4, metalness: 0.15 }));
+      }
+      root.scale.multiplyScalar(obj.size);
+
+      const allMeshes = [];
+      root.traverse(node => {
+        if (node.isMesh) {
+          node.castShadow = obj.type !== 'SINGULARITY';
+          node.receiveShadow = true;
+          allMeshes.push(node);
+          meshToObjectId.set(node, obj.id);
+        }
+      });
+      scene.add(root);
+      const light = attachLightIfSun(root, obj);
+      return { root, allMeshes, light };
+    }
+
+    function disposeVisual(rt) {
+      rt.allMeshes.forEach(m => {
+        meshToObjectId.delete(m);
+        if (m.geometry && m.geometry.dispose) m.geometry.dispose();
+        if (m.material && m.material.dispose) m.material.dispose();
+      });
+      scene.remove(rt.root);
+    }
+
+    // Structural rebuild (shape/model changed) — Size and Color changes are
+    // cheap in-place updates instead (see the Objects tab panel wiring).
+    function rebuildObjectVisual(id) {
+      const obj = params.objects.find(o => o.id === id);
+      const rt = objectRuntime.get(id);
+      if (!obj || !rt) return;
+      disposeVisual(rt);
+      const fresh = buildObjectVisual(obj);
+      objectRuntime.set(id, Object.assign(rt, fresh));
+    }
+
+    function loadCustomObjectFile(id, file) {
       const name = file.name.toLowerCase();
       const reader = new FileReader();
+      const handleLoaded = object3D => {
+        customModelCache.set(id, object3D);
+        rebuildObjectVisual(id);
+      };
       if (name.endsWith('.stl')) {
-        reader.onload = e => buildCustomRunner(new THREE.Mesh(stlLoader.parse(e.target.result)));
+        reader.onload = e => handleLoaded(new THREE.Mesh(stlLoader.parse(e.target.result)));
         reader.readAsArrayBuffer(file);
       } else if (name.endsWith('.obj')) {
-        reader.onload = e => buildCustomRunner(objLoader.parse(e.target.result));
+        reader.onload = e => handleLoaded(objLoader.parse(e.target.result));
         reader.readAsText(file);
       } else {
         alert('Unsupported file type — please choose an .stl or .obj file.');
       }
     }
 
-    runnerGroup.scale.setScalar(params.runner.size);
+    // (Re)seeds an object's orbital state from its current orbit params —
+    // called on creation and on any Distance/Speed/Angle/Parent edit, since
+    // those describe a *launch condition*, not a continuously-authored path.
+    function reseedObjectOrbit(obj) {
+      const rt = objectRuntime.get(obj.id);
+      if (!rt) return;
+      const parentRt = obj.parentId ? objectRuntime.get(obj.parentId) : null;
+      if (!parentRt || !(obj.orbit.distance > 0)) {
+        rt.gState = null; // fixed at the parent's position (or at the universal center if no parent)
+        return;
+      }
+      const mu = Math.max(0.5, parentRt.config.mass);
+      rt.gState = seedOrbitState(mu, obj.orbit.distance, obj.orbit.angleDeg, obj.orbit.speedRatio);
+    }
 
-    // --- Runner Path Playback State ---
-    // Path geometry (nodes/mode/cornering) lives in params.runner.path; this
-    // is the derived per-frame state animate() advances every tick. The
-    // sampler itself, the 3D drag handles, and the visual line are built by
-    // the "Runner Path" section further down (after raycasting is set up).
-    let pathSampler = null;    // { length, pointAt(distance) } — see syncPath()
-    let runnerProgress = 0;    // distance travelled along the current path, in units
-    let runnerDirection = 1;   // 1 = start→end, -1 = end→start (Boomerang)
-    let runnerForward = { x: 0, y: 0, z: -1 }; // last known travel direction (XZ), for facing + camera trail
+    function createObjectRuntime(obj) {
+      const visual = buildObjectVisual(obj);
+      objectRuntime.set(obj.id, { root: visual.root, allMeshes: visual.allMeshes, light: visual.light, gState: null, config: obj });
+      reseedObjectOrbit(obj);
+    }
 
-    // Live lateral dodge applied on top of the sampled path position — see
-    // the Orbital Collision Avoidance section further down. Eased, not
-    // snapped, so the runner settles back onto its authored path smoothly
-    // once clear rather than popping back into place.
-    let avoidOffsetX = 0;
-    let avoidOffsetZ = 0;
-    let lastAvoidUrgency = 0; // 0 = clear, 1 = actively dodging at full strength
+    function destroyObjectRuntime(id) {
+      const rt = objectRuntime.get(id);
+      if (!rt) return;
+      disposeVisual(rt);
+      objectRuntime.delete(id);
+      customModelCache.delete(id);
+    }
+
+    // Depth-sorted (root first) so each frame's physics/position pass can
+    // assume a parent's absolute position is already known before any of
+    // its children are processed. Recomputed only on structural changes
+    // (add/remove/reparent), not every frame.
+    let hierarchyOrderCache = [];
+    function rebuildHierarchyOrder() {
+      const byId = new Map(params.objects.map(o => [o.id, o]));
+      function depthOf(o) {
+        let d = 0, cur = o, guard = 0;
+        while (cur.parentId && byId.has(cur.parentId) && guard++ < 64) {
+          cur = byId.get(cur.parentId);
+          d++;
+        }
+        return d;
+      }
+      hierarchyOrderCache = params.objects.slice().sort((a, b) => depthOf(a) - depthOf(b));
+    }
+
+    // True if `candidateId` is anywhere in `ancestorId`'s own descendant
+    // chain — used to keep the Parent dropdown from ever offering a choice
+    // that would create a cycle.
+    function isDescendantOf(candidateId, ancestorId, byId) {
+      let cur = byId.get(candidateId);
+      let guard = 0;
+      while (cur && cur.parentId && guard++ < 64) {
+        if (cur.parentId === ancestorId) return true;
+        cur = byId.get(cur.parentId);
+      }
+      return false;
+    }
+
+    function objectDisplayName(obj) {
+      return obj.name || OBJECT_TYPES[obj.type].label;
+    }
+
+    function mostMassiveObject() {
+      if (params.objects.length === 0) return null;
+      return params.objects.reduce((a, b) => (b.mass > a.mass ? b : a));
+    }
+
+    let focusedObjectId = null;   // which object's detail panel the Objects tab shows
+    let selectedObjectId = null;  // which object is picked in the 3D scene (see Entity Selection)
+
+    // "Click + to add stellar object" — defaults its parent to whatever's
+    // currently most massive (the closest thing to "its logical hierarchy
+    // by mass" without asking the user to place it manually every time),
+    // and its Distance to comfortably clear that parent's own visual size.
+    // Always focuses the new object right away so its controls are the
+    // next thing the user sees, ready to refine.
+    function addObject(type) {
+      type = type || 'PLANET';
+      const meta = OBJECT_TYPES[type];
+      const existingOfType = params.objects.filter(o => o.type === type).length;
+      const parent = params.objects.length === 0 ? null : mostMassiveObject();
+      const id = 'obj-' + Date.now().toString(36) + Math.floor(Math.random() * 1000).toString(36);
+      const obj = {
+        id,
+        name: meta.label + (existingOfType > 0 ? ' ' + (existingOfType + 1) : ''),
+        type,
+        parentId: parent ? parent.id : null,
+        mass: meta.defaultMass,
+        size: meta.defaultSize,
+        shape: meta.defaultShape,
+        color: meta.color,
+        orbit: {
+          distance: parent ? Math.max(6, (parent.size || 1) * 4) : 0,
+          speedRatio: 1.0,
+          angleDeg: Math.floor(Math.random() * 360)
+        }
+      };
+      params.objects.push(obj);
+      createObjectRuntime(obj);
+      rebuildHierarchyOrder();
+      focusedObjectId = id;
+      renderObjectsTab();
+      playTick();
+      return obj;
+    }
+
+    // Deleting a parent re-parents its children up to *its* parent instead
+    // of stranding them with a dangling reference — a planet's moons stay
+    // in orbit around the sun if the planet itself is removed.
+    function removeObject(id) {
+      const idx = params.objects.findIndex(o => o.id === id);
+      if (idx === -1 || params.objects.length <= 1) return; // always keep at least one object
+      const removed = params.objects[idx];
+      params.objects.forEach(o => { if (o.parentId === id) { o.parentId = removed.parentId; reseedObjectOrbit(o); } });
+      if (selectedObjectId === id) clearSelection();
+      destroyObjectRuntime(id);
+      params.objects.splice(idx, 1);
+      rebuildHierarchyOrder();
+      if (focusedObjectId === id) focusedObjectId = params.objects.length ? params.objects[0].id : null;
+      renderObjectsTab();
+      playTick();
+    }
+
+    // --- Default Construct: the Terran Solar System ---
+    // Real relative mass/distance *ordering* is preserved (Sun ≫ Jupiter >
+    // Saturn > Neptune > Uranus > Earth > Venus > Mars > Mercury > Moon,
+    // and Mercury < Venus < Earth < Mars < asteroid belt < Jupiter < ...
+    // outward), but the absolute numbers are not real astronomical units.
+    // Real mass ratios span ~7 orders of magnitude (Sun ≈ 333,000 Earths)
+    // and, via Kepler's third law, that turns into an even more extreme
+    // spread of orbital periods — a literally-scaled solar system would
+    // make Mercury lap the Sun in seconds while Neptune took days. Masses
+    // here are real Earth-mass ratios compressed by a cube root and
+    // distances by a square root, which keeps every body's relative
+    // standing correct while fitting the whole system into a few minutes
+    // of watchable motion. Earth's Moon, an Artificial Satellite, and the
+    // Enterprise all orbit Earth at hand-picked (not astronomically real)
+    // distances, spaced apart so they don't collide.
+    function buildDefaultSolarSystem() {
+      const bodies = [
+        { name: 'Sol', type: 'SUN', mass: 3000, size: 9, parent: null, distance: 0, angle: 0 },
+        { name: 'Mercury', type: 'PLANET', mass: 16, size: 0.5, parent: 'Sol', distance: 15.6, angle: 0 },
+        { name: 'Venus', type: 'PLANET', mass: 40, size: 0.9, parent: 'Sol', distance: 21.2, angle: 40 },
+        { name: 'Earth', type: 'PLANET', mass: 43, size: 1.0, parent: 'Sol', distance: 25, angle: 80 },
+        { name: 'Moon', type: 'MOON', mass: 10, size: 0.3, parent: 'Earth', distance: 6, angle: 0 },
+        { name: 'Comm Satellite', type: 'SATELLITE', mass: 2, size: 0.3, shape: 'Prism', parent: 'Earth', distance: 4, angle: 120 },
+        { name: 'Enterprise', type: 'SHIP', mass: 3, size: 0.9, shape: 'Starship', color: '#e8e8e8', parent: 'Earth', distance: 8, angle: 240 },
+        { name: 'Mars', type: 'PLANET', mass: 21, size: 0.55, parent: 'Sol', distance: 30.9, angle: 120 },
+        { name: 'Ceres', type: 'ASTEROID', mass: 5, size: 0.25, shape: 'Prism', parent: 'Sol', distance: 41.1, angle: 160 },
+        { name: 'Jupiter', type: 'PLANET', mass: 296, size: 3.2, parent: 'Sol', distance: 57, angle: 200 },
+        { name: 'Saturn', type: 'PLANET', mass: 197, size: 2.8, parent: 'Sol', distance: 77.4, angle: 240 },
+        { name: 'Uranus', type: 'PLANET', mass: 106, size: 1.8, parent: 'Sol', distance: 109.6, angle: 280 },
+        { name: 'Neptune', type: 'PLANET', mass: 111, size: 1.9, parent: 'Sol', distance: 137, angle: 320 }
+      ];
+      const idByName = {};
+      bodies.forEach(b => {
+        const meta = OBJECT_TYPES[b.type];
+        const id = 'obj-' + b.name.toLowerCase().replace(/\s+/g, '-');
+        idByName[b.name] = id;
+        const obj = {
+          id,
+          name: b.name,
+          type: b.type,
+          parentId: b.parent ? idByName[b.parent] : null,
+          mass: b.mass,
+          size: b.size,
+          shape: b.shape || meta.defaultShape,
+          color: b.color || meta.color,
+          orbit: { distance: b.distance, speedRatio: 1.0, angleDeg: b.angle }
+        };
+        params.objects.push(obj);
+        createObjectRuntime(obj);
+      });
+      rebuildHierarchyOrder();
+      focusedObjectId = idByName['Sol'];
+    }
+
+    if (pendingObjectsLoad) {
+      // A loaded/imported program already fully replaced params.objects
+      // (see applyPendingLoad) — just build runtime state from it instead
+      // of the default system.
+      pendingObjectsLoad.forEach(obj => createObjectRuntime(obj));
+      rebuildHierarchyOrder();
+      focusedObjectId = hierarchyOrderCache.length ? hierarchyOrderCache[0].id : null;
+    } else {
+      buildDefaultSolarSystem();
+    }
+
+    // Every frame: walk the hierarchy root-first, integrating each object's
+    // orbit around its *already-positioned* parent and summing into an
+    // absolute world position — the mechanism that turns "nested by mass"
+    // into actual compound motion (a moon looping around a moving planet).
+    function updateObjectsPhysics(delta) {
+      hierarchyOrderCache.forEach(obj => {
+        const rt = objectRuntime.get(obj.id);
+        if (!rt) return;
+        const parentRt = obj.parentId ? objectRuntime.get(obj.parentId) : null;
+        if (!parentRt) {
+          rt.absX = 0; rt.absY = 0; rt.absZ = 0;
+        } else {
+          if (rt.gState) integrateGravity(rt.gState, delta, Math.max(0.5, parentRt.config.mass));
+          rt.absX = parentRt.absX + (rt.gState ? rt.gState.x : 0);
+          rt.absY = parentRt.absY;
+          rt.absZ = parentRt.absZ + (rt.gState ? rt.gState.z : 0);
+        }
+        rt.root.position.set(rt.absX, rt.absY, rt.absZ);
+        if (rt.gState && parentRt) rt.root.lookAt(parentRt.absX, parentRt.absY, parentRt.absZ);
+      });
+    }
 
     // --- Manual Camera Controls (mouse drag / touch drag, wheel / pinch zoom) ---
     // Registered unconditionally so the gesture handlers are always attached;
@@ -1595,8 +1389,8 @@
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.minDistance = 4;
-    controls.maxDistance = 260;
+    controls.minDistance = 2;
+    controls.maxDistance = 1200;
     controls.target.set(0, 0, 0);
     controls.enabled = params.camera.trackingMode === 'Manual Control'; // respects a loaded program
     controls.update();
@@ -1612,21 +1406,27 @@
     const selectionClearBtn = document.getElementById('lcars-selection-clear');
 
     function selectableTargets() {
-      return [...cubes, sourceMesh, ...runnerMeshes];
+      const targets = [];
+      objectRuntime.forEach(rt => targets.push(...rt.allMeshes));
+      return targets;
     }
 
-    // Map a raw raycast hit back to the logical entity it belongs to
-    function resolveEntity(obj) {
-      const cubeIndex = cubes.indexOf(obj);
-      if (cubeIndex !== -1) return { root: obj, label: 'Orbital ' + (cubeIndex + 1) };
-      if (obj === sourceMesh) return { root: obj, label: 'Central Source' };
-      if (runnerMeshes.includes(obj)) return { root: runnerGroup, label: 'Runner' };
-      return null;
+    // Map a raw raycast hit back to the logical object it belongs to —
+    // every sub-mesh of a composite shape (Starship, Custom) maps to the
+    // same object id, so clicking any part selects the whole thing.
+    function resolveEntity(mesh) {
+      const id = meshToObjectId.get(mesh);
+      if (!id) return null;
+      const obj = params.objects.find(o => o.id === id);
+      const rt = objectRuntime.get(id);
+      if (!obj || !rt) return null;
+      return { root: rt.root, label: objectDisplayName(obj), objectId: id };
     }
 
     function setSelection(entity) {
       clearSelection();
       selectedEntity = entity.root;
+      selectedObjectId = entity.objectId;
       selectionHelper = new THREE.BoxHelper(entity.root, hexToNum(LCARS_PALETTE.alert));
       scene.add(selectionHelper);
       selectionValueEl.textContent = entity.label;
@@ -1636,6 +1436,12 @@
         const targetPos = new THREE.Vector3();
         entity.root.getWorldPosition(targetPos);
         controls.target.copy(targetPos);
+      }
+      // Selecting in the 3D scene also focuses that object's controls —
+      // useful even when the Objects tab isn't the one currently open.
+      if (entity.objectId) {
+        focusedObjectId = entity.objectId;
+        if (typeof renderObjectsTab === 'function') renderObjectsTab();
       }
     }
 
@@ -1647,6 +1453,7 @@
         selectionHelper = null;
       }
       selectedEntity = null;
+      selectedObjectId = null;
       selectionBar.hidden = true;
     }
 
@@ -1698,9 +1505,6 @@
       const startOfYear = new Date(now.getFullYear(), 0, 0);
       const dayOfYear = Math.floor((now - startOfYear) / 86400000);
       const secondsToday = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-      // Cosmetic offset only, not canon math: a slow-moving "epoch" plus a
-      // seconds-based fraction that visibly ticks every second, so the
-      // readout actually reads as live at the 1s update cadence below.
       const whole = 47000 + (now.getFullYear() - 2024) * 1000 + Math.floor(dayOfYear * 2.7);
       const frac = (secondsToday % 100).toString().padStart(2, '0');
       return 'SD ' + whole + '.' + frac;
@@ -1716,7 +1520,6 @@
       spineTicks.forEach(t => { t.textContent = randomTick(); });
       telemetryTimer = setInterval(() => {
         if (stardateEl) stardateEl.textContent = computeStardate();
-        // Stagger which tick updates so they don't all flicker in lockstep
         const i = Math.floor(Math.random() * spineTicks.length);
         if (spineTicks[i]) spineTicks[i].textContent = randomTick();
       }, 1000);
@@ -1737,12 +1540,8 @@
       menuOpen = true;
       hudEl.classList.add('is-open');
       hudHintEl.hidden = true;
-      updatePathMarkersVisibility();
       startTelemetry();
       playOpen();
-      // Move focus into the panel, same as any standard disclosure widget —
-      // TABS/activeTabId are defined further down but this only runs later,
-      // after a real open gesture, by which point they're long since ready.
       const active = TABS.find(t => t.id === activeTabId);
       if (active) active.btn.focus();
     }
@@ -1752,24 +1551,16 @@
       menuOpen = false;
       hudEl.classList.remove('is-open');
       hudHintEl.hidden = false;
-      updatePathMarkersVisibility();
       stopTelemetry();
       playDismiss();
-      hudHintEl.focus(); // return focus to the (now visible again) summon control
+      hudHintEl.focus();
     }
 
-    // The hint doubles as the only way to reach the HUD without a
-    // double-tap/double-click gesture — a single click/tap/Enter opens it.
     hudHintEl.addEventListener('click', openMenu);
-    // Escape is the standard, expected way to dismiss an open overlay panel.
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && menuOpen) closeMenu();
     });
 
-    // Unified double-click (mouse) / double-tap (touch) detection via Pointer
-    // Events, so both input types share one code path instead of relying on
-    // the (touch-unreliable) native 'dblclick' event. Shared by the scene
-    // canvas (open the menu / select an entity) and the HUD itself (close it).
     const DOUBLE_TAP_MS = 350;
     const DOUBLE_TAP_PX = 28;
 
@@ -1786,7 +1577,7 @@
 
         if (isDouble) {
           onDoubleActivate(e);
-          last.time = 0; // consume, so a triple tap doesn't re-trigger
+          last.time = 0;
         } else {
           last = { time: now, x: e.clientX, y: e.clientY, pointerType: e.pointerType };
         }
@@ -1794,8 +1585,6 @@
     }
 
     watchDoubleActivate(renderer.domElement, (e) => {
-      // First double-tap in the scene just summons the menu; once it's open,
-      // double-tap goes back to selecting/deselecting whatever is under it.
       if (!menuOpen) {
         openMenu();
         return;
@@ -1807,192 +1596,7 @@
       if (menuOpen) closeMenu();
     });
 
-    // --- Runner Path: node math, 3D visualization, drag-to-edit handles ---
     function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
-
-    // Distance-based sampler over the path nodes: pointAt(distance) walks the
-    // path at constant speed no matter how many nodes or which corner style.
-    function buildPathSampler(nodes, cornerStyle) {
-      if (cornerStyle === 'Round' && nodes.length >= 3) {
-        const points = nodes.map(n => new THREE.Vector3(n.x, n.y, n.z));
-        const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.5);
-        const length = curve.getLength();
-        return {
-          length,
-          pointAt(distance) {
-            const t = length > 0 ? clamp(distance / length, 0, 1) : 0;
-            return curve.getPointAt(t);
-          }
-        };
-      }
-      // Square corners (or only 2 nodes, where round and square are identical): straight segments
-      const segLengths = [];
-      let total = 0;
-      for (let i = 0; i < nodes.length - 1; i++) {
-        const a = nodes[i], b = nodes[i + 1];
-        const d = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
-        segLengths.push(d);
-        total += d;
-      }
-      return {
-        length: total,
-        pointAt(distance) {
-          let remaining = clamp(distance, 0, total);
-          for (let i = 0; i < segLengths.length; i++) {
-            const segLen = segLengths[i];
-            if (remaining <= segLen || i === segLengths.length - 1) {
-              const t = segLen > 0 ? remaining / segLen : 0;
-              const a = nodes[i], b = nodes[i + 1];
-              return new THREE.Vector3(
-                a.x + (b.x - a.x) * t,
-                a.y + (b.y - a.y) * t,
-                a.z + (b.z - a.z) * t
-              );
-            }
-            remaining -= segLen;
-          }
-          const last = nodes[nodes.length - 1];
-          return new THREE.Vector3(last.x, last.y, last.z);
-        }
-      };
-    }
-
-    // Regenerates the node list to a new count, keeping start/end fixed and
-    // redistributing intermediate nodes evenly along the start→end line.
-    function setPathNodeCount(count) {
-      const nodes = params.runner.path.nodes;
-      const start = nodes[0];
-      const end = nodes[nodes.length - 1];
-      const next = [];
-      for (let i = 0; i < count; i++) {
-        const t = count === 1 ? 0 : i / (count - 1);
-        next.push({
-          x: start.x + (end.x - start.x) * t,
-          y: start.y + (end.y - start.y) * t,
-          z: start.z + (end.z - start.z) * t
-        });
-      }
-      params.runner.path.nodes = next;
-    }
-
-    let pathMarkers = [];
-    let pathLine = null;
-    let pathMarkersVisible = false;
-
-    // Rebuilds the sampler and visual line (always), and the drag handles
-    // (only when the node count changed) from params.runner.path.
-    function syncPath(options) {
-      const nodes = params.runner.path.nodes;
-      const rebuildMarkers = (options && options.rebuildMarkers) || pathMarkers.length !== nodes.length;
-
-      if (rebuildMarkers) {
-        pathMarkers.forEach(m => {
-          scene.remove(m);
-          m.geometry.dispose();
-          m.material.dispose();
-        });
-        pathMarkers = nodes.map((n, i) => {
-          const isEndpoint = i === 0 || i === nodes.length - 1;
-          const marker = new THREE.Mesh(
-            new THREE.SphereGeometry(isEndpoint ? 0.9 : 0.55, 16, 12),
-            new THREE.MeshBasicMaterial({ color: isEndpoint ? hexToNum(LCARS_PALETTE.mars) : hexToNum(LCARS_PALETTE.gold), depthTest: false })
-          );
-          marker.renderOrder = 999;
-          marker.userData.nodeIndex = i;
-          marker.visible = pathMarkersVisible;
-          scene.add(marker);
-          return marker;
-        });
-      }
-      // nodes[i].y is height-above-ground (see the params.runner.path
-      // comment) — add the current ground level so markers/line render
-      // exactly where the runner itself will be, not at the raw stored Y.
-      const groundY = groundLevelY();
-      pathMarkers.forEach((m, i) => m.position.set(nodes[i].x, nodes[i].y + groundY, nodes[i].z));
-
-      pathSampler = buildPathSampler(nodes, params.runner.path.corner);
-      const segments = 48;
-      const linePts = [];
-      for (let i = 0; i <= segments; i++) {
-        const p = pathSampler.pointAt((i / segments) * pathSampler.length);
-        linePts.push(new THREE.Vector3(p.x, p.y + groundY, p.z));
-      }
-      if (!pathLine) {
-        pathLine = new THREE.Line(
-          new THREE.BufferGeometry(),
-          new THREE.LineBasicMaterial({ color: hexToNum(LCARS_PALETTE.alert), transparent: true, opacity: 0.6, depthTest: false })
-        );
-        pathLine.renderOrder = 998;
-        pathLine.visible = pathMarkersVisible;
-        scene.add(pathLine);
-      }
-      pathLine.geometry.dispose();
-      pathLine.geometry = new THREE.BufferGeometry().setFromPoints(linePts);
-
-      runnerProgress = clamp(runnerProgress, 0, pathSampler.length);
-    }
-
-    syncPath({ rebuildMarkers: true });
-
-    function setPathMarkersVisible(visible) {
-      pathMarkersVisible = visible;
-      pathMarkers.forEach(m => { m.visible = visible; });
-      if (pathLine) pathLine.visible = visible;
-    }
-
-    // The path is only shown/draggable while it's actually being edited, so
-    // the scene stays clean the rest of the time.
-    function updatePathMarkersVisibility() {
-      // No point showing drag handles for a path that isn't driving the
-      // runner right now — Gravity Orbit mode ignores it entirely.
-      setPathMarkersVisible(menuOpen && activeTabId === 'runner' && params.runner.motionMode === 'Scripted Path');
-    }
-
-    // Drag-to-edit path nodes (mouse + touch), constrained to the node's own
-    // horizontal plane. Only active when the handles are visible and the
-    // camera isn't in Manual Control, so a drag never fights an orbit gesture.
-    const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    const dragPoint = new THREE.Vector3();
-    let draggingNodeIndex = null;
-
-    renderer.domElement.addEventListener('pointerdown', (e) => {
-      if (controls.enabled || !pathMarkersVisible) return;
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointerNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      pointerNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointerNDC, camera);
-      const hits = raycaster.intersectObjects(pathMarkers, false);
-      if (hits.length === 0) return;
-
-      draggingNodeIndex = hits[0].object.userData.nodeIndex;
-      dragPlane.constant = -hits[0].object.position.y; // drag along the node's own height
-      e.preventDefault();
-    });
-
-    renderer.domElement.addEventListener('pointermove', (e) => {
-      if (draggingNodeIndex === null) return;
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointerNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      pointerNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointerNDC, camera);
-      if (!raycaster.ray.intersectPlane(dragPlane, dragPoint)) return;
-
-      const node = params.runner.path.nodes[draggingNodeIndex];
-      node.x = clamp(dragPoint.x, -100, 100);
-      node.z = clamp(dragPoint.z, -100, 100);
-      syncPath();
-
-      const lastIndex = params.runner.path.nodes.length - 1;
-      if (draggingNodeIndex === 0) {
-        pathStartXPanel.refresh(node.x);
-        pathStartZPanel.refresh(node.z);
-      } else if (draggingNodeIndex === lastIndex) {
-        pathEndXPanel.refresh(node.x);
-        pathEndZPanel.refresh(node.z);
-      }
-    });
-
-    window.addEventListener('pointerup', () => { draggingNodeIndex = null; });
 
     // --- Interaction Audio (synthesized, muted by default) ---
     // Never plays on page load — only ever invoked from inside a click/key
@@ -2029,10 +1633,10 @@
       osc.stop(ctx.currentTime + duration);
     }
 
-    function playTick() { playBlip(880, 1100, 0.06, 0.05); }    // any button/tab/toggle press
-    function playConfirm() { playBlip(660, 990, 0.09, 0.06); }  // entity selected
-    function playDismiss() { playBlip(990, 660, 0.09, 0.06); }  // entity deselected / HUD closed
-    function playOpen() { playBlip(520, 1040, 0.12, 0.06); }    // HUD opened
+    function playTick() { playBlip(880, 1100, 0.06, 0.05); }
+    function playConfirm() { playBlip(660, 990, 0.09, 0.06); }
+    function playDismiss() { playBlip(990, 660, 0.09, 0.06); }
+    function playOpen() { playBlip(520, 1040, 0.12, 0.06); }
 
     const audioToggleBtn = document.getElementById('lcars-audio-toggle');
     audioToggleBtn.addEventListener('click', () => {
@@ -2040,26 +1644,9 @@
       audioToggleBtn.setAttribute('aria-pressed', audioEnabled ? 'true' : 'false');
       if (audioEnabled) {
         ensureAudioContext();
-        playTick(); // immediate confirmation that sound just turned on
+        playTick();
       }
     });
-
-    // --- Dynamic Updates Helper Functions ---
-    function updateMaterials() {
-      cubeMaterials[0].color.set(params.surfaceColors.parallelFaces);
-      cubeMaterials[1].color.set(params.surfaceColors.parallelFaces);
-      cubeMaterials[2].color.set(params.surfaceColors.parallelFaces);
-      cubeMaterials[3].color.set(params.surfaceColors.parallelFaces);
-      cubeMaterials[4].color.set(params.surfaceColors.outwardFace);
-      cubeMaterials[5].color.set(params.surfaceColors.inwardFace);
-    }
-
-    function updateCubeScale() {
-      cubes.forEach(cube => {
-        cube.scale.set(params.cube.sizeX, params.cube.sizeY, params.cube.sizeZ);
-      });
-      repositionGroundMeshes();
-    }
 
     // --- LCARS HUD: element builders ---
     function el(tag, cls, text) {
@@ -2105,8 +1692,6 @@
       slider.step = opts.step;
       slider.value = opts.value;
       slider.setAttribute('aria-labelledby', titleId);
-      // Screen readers announce the raw slider number by default; this makes
-      // them announce the same formatted+unit text the panel displays instead.
       slider.setAttribute('aria-valuetext', valueText(opts.value));
       slider.addEventListener('input', () => {
         const v = parseFloat(slider.value);
@@ -2165,7 +1750,7 @@
       const { headerEl, titleId } = panelHeader(opts.code, opts.title);
       panel.appendChild(headerEl);
 
-      const valueEl = el('div', 'tool-value tool-value--text', opts.value);
+      const valueEl = el('div', 'tool-value tool-value--text', labels[opts.value] || opts.value);
       panel.appendChild(valueEl);
 
       const optsRow = el('div', 'tool-select');
@@ -2184,7 +1769,7 @@
           });
           btn.classList.add('is-active');
           btn.setAttribute('aria-pressed', 'true');
-          valueEl.textContent = optVal;
+          valueEl.textContent = labels[optVal] || optVal;
           opts.onChange(optVal);
         });
         optsRow.appendChild(btn);
@@ -2195,7 +1780,7 @@
       container.appendChild(panel);
       return {
         refresh(v) {
-          valueEl.textContent = v;
+          valueEl.textContent = labels[v] || v;
           buttons.forEach(b => {
             const active = b.dataset.value === v;
             b.classList.toggle('is-active', active);
@@ -2268,6 +1853,33 @@
       };
     }
 
+    // A simple free-text field — used for an object's Name, the one control
+    // that doesn't fit slider/toggle/select/color/file.
+    function createTextFieldPanel(container, opts) {
+      const panel = el('div', 'lcars-panel');
+      const { headerEl, titleId } = panelHeader(opts.code, opts.title);
+      panel.appendChild(headerEl);
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'tool-text-input';
+      input.style.width = '100%';
+      input.style.boxSizing = 'border-box';
+      input.style.marginTop = '6px';
+      input.value = opts.value;
+      input.maxLength = 40;
+      input.setAttribute('aria-labelledby', titleId);
+      const commit = () => {
+        const v = input.value.trim();
+        opts.onChange(v || opts.value);
+      };
+      input.addEventListener('change', commit);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+      panel.appendChild(input);
+
+      container.appendChild(panel);
+    }
+
     // --- LCARS HUD: menu + tabs scaffold ---
     const hudMenu = document.getElementById('lcars-menu');
     const hudPanels = document.getElementById('lcars-tabpanels');
@@ -2275,13 +1887,8 @@
     hudMenu.setAttribute('aria-label', 'Control categories');
 
     const TABS = [
-      { id: 'source', label: 'Source', accent: LCARS_PALETTE.butterscotch },
-      { id: 'orbit', label: 'Orbit', accent: LCARS_PALETTE.africanViolet },
-      { id: 'cube', label: 'Orbital', accent: LCARS_PALETTE.periwinkle },
-      { id: 'surface', label: 'Surface', accent: LCARS_PALETTE.gold },
-      { id: 'runner', label: 'Runner', accent: LCARS_PALETTE.mars },
+      { id: 'objects', label: 'Objects', accent: LCARS_PALETTE.periwinkle },
       { id: 'camera', label: 'Camera', accent: LCARS_PALETTE.ice },
-      { id: 'world', label: 'World', accent: LCARS_PALETTE.salmon },
       { id: 'memory', label: 'Memory', accent: LCARS_PALETTE.plum }
     ];
 
@@ -2293,7 +1900,7 @@
       btn.setAttribute('role', 'tab');
       btn.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
       btn.setAttribute('aria-controls', 'lcars-tabpanel-' + tab.id);
-      btn.tabIndex = i === 0 ? 0 : -1; // roving tabindex — standard ARIA tablist pattern
+      btn.tabIndex = i === 0 ? 0 : -1;
       btn.style.setProperty('--tab-accent', tab.accent);
       btn.style.setProperty('--tab-accent-dim', dimHex(tab.accent, 0.85));
       btn.addEventListener('click', () => activateTab(tab.id));
@@ -2314,7 +1921,7 @@
     function activateTab(id) {
       activeTabId = id;
       const activeTab = TABS.find(t => t.id === id);
-      if (activeTab) hudEl.style.setProperty('--spine-accent', activeTab.accent); // live "you are here" cue
+      if (activeTab) hudEl.style.setProperty('--spine-accent', activeTab.accent);
       TABS.forEach(tab => {
         const active = tab.id === id;
         tab.btn.classList.toggle('is-active', active);
@@ -2322,12 +1929,9 @@
         tab.btn.tabIndex = active ? 0 : -1;
         tabPanelEls[tab.id].classList.toggle('is-active', active);
       });
-      updatePathMarkersVisibility();
       playTick(); // no-ops silently at the initial bootstrap call — audio starts off
     }
 
-    // Left/Right/Home/End moves focus AND activates — the standard ARIA
-    // "manual activation" tablist keyboard pattern.
     hudMenu.addEventListener('keydown', (e) => {
       const currentIndex = TABS.findIndex(t => t.id === activeTabId);
       let nextIndex = null;
@@ -2343,304 +1947,142 @@
 
     activateTab(TABS[0].id); // seed the spine color to match the default active tab
 
-    const sourceTab = tabPanelEls.source;
-    const orbitTab = tabPanelEls.orbit;
-    const cubeTab = tabPanelEls.cube;
-    const surfaceTab = tabPanelEls.surface;
-    const runnerTab = tabPanelEls.runner;
+    const objectsTab = tabPanelEls.objects;
     const cameraTab = tabPanelEls.camera;
-    const worldTab = tabPanelEls.world;
     const memoryTab = tabPanelEls.memory;
 
-    // 1. Central Source — the construct's core, everything else is built around it
-    createColorPanel(sourceTab, { code: 'SRC-01', title: 'Source Color', value: params.source.color, onChange: c => {
-      params.source.color = c;
-      centralPointLight.color.set(c);
-      sourceMeshMat.color.set(c);
-    }});
-    createSliderPanel(sourceTab, { code: 'SRC-02', title: 'Intensity', unit: '×', min: 0, max: 10, step: 0.1, value: params.source.intensity, format: v => v.toFixed(1), onInput: v => {
-      params.source.intensity = v;
-      centralPointLight.intensity = v;
-    }});
-    createSliderPanel(sourceTab, { code: 'SRC-03', title: 'Source Size', unit: 'u', min: 0.1, max: 10, step: 0.1, value: params.source.size, format: v => v.toFixed(1), onInput: v => {
-      params.source.size = v;
-      sourceMesh.scale.setScalar(v);
-    }});
-    createSliderPanel(sourceTab, { code: 'SRC-04', title: 'Light Range', unit: 'u', min: 10, max: 300, step: 1, value: params.source.distance, format: v => Math.round(v), onInput: v => {
-      params.source.distance = v;
-      centralPointLight.distance = v;
-    }});
+    // 1. Objects — the dynamic hierarchy: a chip row (one per object, "+"
+    // to add another) and a detail panel for whichever object is focused.
+    // Full teardown-and-rebuild on any structural change (add/remove/
+    // rename/reparent/reshape) rather than trying to rebind existing
+    // panels' closures to a different target object — simpler and cheap
+    // enough for HUD-sized DOM.
+    function renderObjectsTab() {
+      objectsTab.innerHTML = '';
 
-    // 2. Orbit & Central Cog — the structural mechanism orbiting the source
-    createSliderPanel(orbitTab, { code: 'ORB-01', title: 'Orbital Count', unit: 'n', min: 3, max: 24, step: 1, value: params.orbit.count, format: v => Math.round(v), onInput: v => {
-      params.orbit.count = Math.round(v);
-      buildOrbitingCubes();
-    }});
-    createSliderPanel(orbitTab, { code: 'ORB-02', title: 'Orbit Radius', unit: 'u', min: 10, max: 100, step: 0.5, value: params.orbit.radius, format: v => v.toFixed(1), onInput: v => {
-      params.orbit.radius = v;
-      buildOrbitingCubes();
-    }});
-    createSliderPanel(orbitTab, { code: 'ORB-03', title: 'Orbit Speed', unit: 'rad/s', min: -2.0, max: 2.0, step: 0.01, value: params.orbit.speed, format: v => v.toFixed(2), onInput: v => {
-      // Now the seed rate for the shared gravity law (mu ∝ speed² ·
-      // radius³, see gravitationalParameter()) rather than a fixed
-      // rotation rate — a live drag immediately changes how strongly
-      // *every* orbital and a Gravity Orbit runner are pulled, without
-      // needing a reseed, the same way changing a star's mass would.
-      // Sign still flips orbit direction (used only at the next reseed).
-      params.orbit.speed = v;
-    }});
-    createSliderPanel(orbitTab, { code: 'ORB-04', title: 'Cog System Scale', unit: '×', min: 0.1, max: 5.0, step: 0.1, value: params.orbit.cogSize, format: v => v.toFixed(1), onInput: v => {
-      params.orbit.cogSize = v;
-      orbitGroup.scale.set(v, 1, v);
-    }});
-    createSliderPanel(orbitTab, { code: 'ORB-05', title: 'Orbit Eccentricity', unit: '', min: 0, max: 0.9, step: 0.05, value: params.orbit.eccentricity, format: v => v.toFixed(2), onInput: v => {
-      params.orbit.eccentricity = v;
-      buildOrbitingCubes();
-    }});
+      const chipRow = el('div', 'tool-object-row');
+      params.objects.forEach(obj => {
+        const chip = el('button', 'tool-object-chip' + (obj.id === focusedObjectId ? ' is-focused' : ''), objectDisplayName(obj));
+        chip.type = 'button';
+        chip.style.color = obj.color;
+        chip.style.background = dimHex(obj.color, 0.8);
+        chip.setAttribute('aria-pressed', obj.id === focusedObjectId ? 'true' : 'false');
+        chip.addEventListener('click', () => {
+          playTick();
+          focusedObjectId = obj.id;
+          renderObjectsTab();
+        });
+        chipRow.appendChild(chip);
+      });
+      const addChip = el('button', 'tool-object-chip tool-object-chip--add', '+');
+      addChip.type = 'button';
+      addChip.setAttribute('aria-label', 'Add stellar object');
+      addChip.addEventListener('click', () => addObject('PLANET'));
+      chipRow.appendChild(addChip);
+      objectsTab.appendChild(chipRow);
 
-    // 3. Orbital Entity Dimensions — geometry of the orbiting units themselves
-    createTogglePanel(cubeTab, { code: 'CUB-01', title: 'Lock XYZ Proportions', value: params.cube.proportionalLock, onLabel: 'LOCKED', offLabel: 'UNLOCKED', onChange: v => {
-      params.cube.proportionalLock = v;
-    }});
-    createSliderPanel(cubeTab, { code: 'CUB-02', title: 'Uniform Size', unit: 'u', min: 0.5, max: 20, step: 0.1, value: params.cube.uniformScale, format: v => v.toFixed(1), onInput: v => {
-      params.cube.uniformScale = v;
-      if (params.cube.proportionalLock) {
-        params.cube.sizeX = v;
-        params.cube.sizeY = v;
-        params.cube.sizeZ = v;
-        cXPanel.refresh(v);
-        cYPanel.refresh(v);
-        cZPanel.refresh(v);
-        updateCubeScale();
+      const obj = params.objects.find(o => o.id === focusedObjectId);
+      if (!obj) {
+        objectsTab.appendChild(el('div', 'tool-program-empty', 'No object selected'));
+        return;
       }
-    }});
-    const cXPanel = createSliderPanel(cubeTab, { code: 'CUB-03', title: 'Dimension X', unit: 'u', min: 0.5, max: 30, step: 0.1, value: params.cube.sizeX, format: v => v.toFixed(1), sub: true, onInput: v => {
-      params.cube.sizeX = v;
-      if (!params.cube.proportionalLock) updateCubeScale();
-    }});
-    const cYPanel = createSliderPanel(cubeTab, { code: 'CUB-04', title: 'Dimension Y', unit: 'u', min: 0.5, max: 30, step: 0.1, value: params.cube.sizeY, format: v => v.toFixed(1), sub: true, onInput: v => {
-      params.cube.sizeY = v;
-      if (!params.cube.proportionalLock) updateCubeScale();
-    }});
-    const cZPanel = createSliderPanel(cubeTab, { code: 'CUB-05', title: 'Dimension Z', unit: 'u', min: 0.5, max: 30, step: 0.1, value: params.cube.sizeZ, format: v => v.toFixed(1), sub: true, onInput: v => {
-      params.cube.sizeZ = v;
-      if (!params.cube.proportionalLock) updateCubeScale();
-    }});
+      const meta = OBJECT_TYPES[obj.type];
+      const byId = new Map(params.objects.map(o => [o.id, o]));
 
-    // 4. Surface Colors — material finish applied on top of the geometry
-    createSelectPanel(surfaceTab, {
-      code: 'SRF-01',
-      title: 'Palette Preset',
-      options: ['Default (Black/Grey/White)', 'High Contrast Inverted', 'Monochrome Dark'],
-      labels: {
-        'Default (Black/Grey/White)': 'Default',
-        'High Contrast Inverted': 'Inverted',
-        'Monochrome Dark': 'Mono Dark'
-      },
-      value: params.surfaceColors.preset,
-      onChange: v => {
-        params.surfaceColors.preset = v;
-        if (v === 'Default (Black/Grey/White)') {
-          params.surfaceColors.inwardFace = '#ffffff';
-          params.surfaceColors.outwardFace = '#000000';
-          params.surfaceColors.parallelFaces = '#808080';
-        } else if (v === 'High Contrast Inverted') {
-          params.surfaceColors.inwardFace = '#000000';
-          params.surfaceColors.outwardFace = '#ffffff';
-          params.surfaceColors.parallelFaces = '#444444';
-        } else if (v === 'Monochrome Dark') {
-          params.surfaceColors.inwardFace = '#888888';
-          params.surfaceColors.outwardFace = '#111111';
-          params.surfaceColors.parallelFaces = '#333333';
-        }
-        inwardPanel.refresh(params.surfaceColors.inwardFace);
-        outwardPanel.refresh(params.surfaceColors.outwardFace);
-        parallelPanel.refresh(params.surfaceColors.parallelFaces);
-        updateMaterials();
-      }
-    });
-    const inwardPanel = createColorPanel(surfaceTab, { code: 'SRF-02', title: 'Inward Face (Center)', value: params.surfaceColors.inwardFace, onChange: c => {
-      params.surfaceColors.inwardFace = c;
-      updateMaterials();
-    }});
-    const outwardPanel = createColorPanel(surfaceTab, { code: 'SRF-03', title: 'Outward Face (Away)', value: params.surfaceColors.outwardFace, onChange: c => {
-      params.surfaceColors.outwardFace = c;
-      updateMaterials();
-    }});
-    const parallelPanel = createColorPanel(surfaceTab, { code: 'SRF-04', title: 'Parallel Faces (Horizon/Side)', value: params.surfaceColors.parallelFaces, onChange: c => {
-      params.surfaceColors.parallelFaces = c;
-      updateMaterials();
-    }});
+      createTextFieldPanel(objectsTab, { code: 'OBJ-01', title: 'Name', value: obj.name, onChange: v => {
+        obj.name = v;
+        renderObjectsTab();
+      }});
 
-    // 5. Runner — the moving entity travelling the construct, and the path it follows
-    const enableRunPanel = createTogglePanel(runnerTab, { code: 'RUN-01', title: 'Enable Run Path', value: params.runner.active, onLabel: 'ACTIVE', offLabel: 'STANDBY', onChange: v => {
-      params.runner.active = v;
-      // Replaying a finished one-shot restarts it from the beginning
-      if (v && params.runner.path.mode === 'Play Once' && pathSampler && runnerProgress >= pathSampler.length) {
-        runnerProgress = 0;
-        runnerDirection = 1;
-      }
-    }});
-    // Which motion system moves the runner: the pre-existing authored
-    // waypoint path, or the new gravity-simulated body (see the Shared
-    // Gravity Law / Runner: Gravity Orbit sections). Placed right after
-    // Enable Run Path since it decides which of the two panel groups
-    // below actually applies.
-    const scriptedOnlyPanels = [];
-    const gravityOnlyPanels = [];
-    createSelectPanel(runnerTab, {
-      code: 'RUN-17',
-      title: 'Motion Mode',
-      options: ['Scripted Path', 'Gravity Orbit'],
-      value: params.runner.motionMode,
-      onChange: v => {
-        params.runner.motionMode = v;
-        const scripted = v === 'Scripted Path';
-        scriptedOnlyPanels.forEach(p => p.setVisible(scripted));
-        gravityOnlyPanels.forEach(p => p.setVisible(!scripted));
-        updatePathMarkersVisibility();
-        if (!scripted) seedGravityRunner();
-      }
-    });
-    createSelectPanel(runnerTab, {
-      code: 'RUN-02',
-      title: 'Runner Shape',
-      options: ['Rectifier', 'Sphere', 'Cube', 'Custom'],
-      labels: { Custom: 'Custom (STL/OBJ)' },
-      value: params.runner.shape,
-      onChange: v => {
-        params.runner.shape = v;
-        applyRunnerShape(v);
-        customModelPanel.setVisible(v === 'Custom');
-      }
-    });
-    const customModelPanel = createFilePanel(runnerTab, {
-      code: 'RUN-03',
-      title: 'Custom Model',
-      accept: '.stl,.obj',
-      visible: params.runner.shape === 'Custom',
-      onChange: file => loadCustomRunnerFile(file)
-    });
-    createSliderPanel(runnerTab, { code: 'RUN-04', title: 'Runner Size', unit: '×', min: 0.1, max: 5.0, step: 0.05, value: params.runner.size, format: v => v.toFixed(2), onInput: v => {
-      params.runner.size = v;
-      runnerGroup.scale.setScalar(v);
-    }});
-    const scriptedPlaybackPanel = createSelectPanel(runnerTab, {
-      code: 'RUN-05',
-      title: 'Path Playback',
-      options: ['Loop', 'Play Once', 'Boomerang'],
-      value: params.runner.path.mode,
-      onChange: v => {
-        params.runner.path.mode = v;
-        runnerDirection = 1;
-      }
-    });
-    const scriptedCorneringPanel = createSelectPanel(runnerTab, {
-      code: 'RUN-06',
-      title: 'Path Cornering',
-      options: ['Square', 'Round'],
-      value: params.runner.path.corner,
-      onChange: v => {
-        params.runner.path.corner = v;
-        syncPath();
-      }
-    });
-    const scriptedNodesPanel = createSliderPanel(runnerTab, { code: 'RUN-07', title: 'Path Nodes', unit: 'n', min: 2, max: 6, step: 1, value: params.runner.path.nodes.length, format: v => Math.round(v), onInput: v => {
-      setPathNodeCount(Math.round(v));
-      syncPath({ rebuildMarkers: true });
-      const nodes = params.runner.path.nodes;
-      const last = nodes[nodes.length - 1];
-      pathStartXPanel.refresh(nodes[0].x);
-      pathStartYPanel.refresh(nodes[0].y);
-      pathStartZPanel.refresh(nodes[0].z);
-      pathEndXPanel.refresh(last.x);
-      pathEndYPanel.refresh(last.y);
-      pathEndZPanel.refresh(last.z);
-    }});
-    const pathStartXPanel = createSliderPanel(runnerTab, { code: 'RUN-08', title: 'Path Start X', unit: 'u', min: -100, max: 100, step: 0.5, value: params.runner.path.nodes[0].x, format: v => v.toFixed(1), sub: true, onInput: v => {
-      params.runner.path.nodes[0].x = v;
-      syncPath();
-    }});
-    const pathStartYPanel = createSliderPanel(runnerTab, { code: 'RUN-09', title: 'Path Start Y', unit: 'u', min: -20, max: 20, step: 0.5, value: params.runner.path.nodes[0].y, format: v => v.toFixed(1), sub: true, onInput: v => {
-      params.runner.path.nodes[0].y = v;
-      syncPath();
-    }});
-    const pathStartZPanel = createSliderPanel(runnerTab, { code: 'RUN-10', title: 'Path Start Z', unit: 'u', min: -100, max: 100, step: 0.5, value: params.runner.path.nodes[0].z, format: v => v.toFixed(1), sub: true, onInput: v => {
-      params.runner.path.nodes[0].z = v;
-      syncPath();
-    }});
-    const pathEndXPanel = createSliderPanel(runnerTab, { code: 'RUN-11', title: 'Path End X', unit: 'u', min: -100, max: 100, step: 0.5, value: params.runner.path.nodes[params.runner.path.nodes.length - 1].x, format: v => v.toFixed(1), sub: true, onInput: v => {
-      const nodes = params.runner.path.nodes;
-      nodes[nodes.length - 1].x = v;
-      syncPath();
-    }});
-    const pathEndYPanel = createSliderPanel(runnerTab, { code: 'RUN-12', title: 'Path End Y', unit: 'u', min: -20, max: 20, step: 0.5, value: params.runner.path.nodes[params.runner.path.nodes.length - 1].y, format: v => v.toFixed(1), sub: true, onInput: v => {
-      const nodes = params.runner.path.nodes;
-      nodes[nodes.length - 1].y = v;
-      syncPath();
-    }});
-    const pathEndZPanel = createSliderPanel(runnerTab, { code: 'RUN-13', title: 'Path End Z', unit: 'u', min: -100, max: 100, step: 0.5, value: params.runner.path.nodes[params.runner.path.nodes.length - 1].z, format: v => v.toFixed(1), sub: true, onInput: v => {
-      const nodes = params.runner.path.nodes;
-      nodes[nodes.length - 1].z = v;
-      syncPath();
-    }});
-    const scriptedSpeedPanel = createSliderPanel(runnerTab, { code: 'RUN-14', title: 'Run Speed', unit: 'u/s', min: 1.0, max: 40.0, step: 0.5, value: params.runner.speed, format: v => v.toFixed(1), onInput: v => {
-      params.runner.speed = v;
-    }});
-    scriptedOnlyPanels.push(scriptedPlaybackPanel, scriptedCorneringPanel, scriptedNodesPanel, pathStartXPanel, pathStartYPanel, pathStartZPanel, pathEndXPanel, pathEndYPanel, pathEndZPanel, scriptedSpeedPanel);
+      createSelectPanel(objectsTab, { code: 'OBJ-02', title: 'Type', options: OBJECT_TYPE_ORDER, labels: OBJECT_TYPE_LABELS, value: obj.type, onChange: v => {
+        const newMeta = OBJECT_TYPES[v];
+        obj.type = v;
+        obj.mass = newMeta.defaultMass;
+        obj.size = newMeta.defaultSize;
+        obj.shape = newMeta.defaultShape;
+        obj.color = newMeta.color;
+        rebuildObjectVisual(obj.id);
+        renderObjectsTab();
+      }});
 
-    const gravityStartDistPanel = createSliderPanel(runnerTab, {
-      code: 'RUN-18', title: 'Gravity Start Distance', unit: 'u', min: 15, max: 150, step: 1, value: params.runner.gravity.startDistance, format: v => Math.round(v),
-      visible: params.runner.motionMode === 'Gravity Orbit',
-      onInput: v => { params.runner.gravity.startDistance = v; seedGravityRunner(); }
-    });
-    const gravityStartAnglePanel = createSliderPanel(runnerTab, {
-      code: 'RUN-19', title: 'Gravity Start Angle', unit: '°', min: 0, max: 360, step: 1, value: params.runner.gravity.startAngleDeg, format: v => Math.round(v),
-      visible: params.runner.motionMode === 'Gravity Orbit',
-      onInput: v => { params.runner.gravity.startAngleDeg = v; seedGravityRunner(); }
-    });
-    const gravitySpeedRatioPanel = createSliderPanel(runnerTab, {
-      code: 'RUN-20', title: 'Gravity Speed Ratio', unit: '× circular', min: 0.1, max: 2.0, step: 0.05, value: params.runner.gravity.speedRatio, format: v => v.toFixed(2),
-      visible: params.runner.motionMode === 'Gravity Orbit',
-      // <1 = falls inward from an apoapsis start; 1 = circular; up to
-      // ~1.41 = increasingly eccentric ellipse; ~1.41 = parabolic escape;
-      // >1.41 = hyperbolic flyby that leaves for good (until it's relaunched).
-      onInput: v => { params.runner.gravity.speedRatio = v; seedGravityRunner(); }
-    });
-    const gravityLaunchAnglePanel = createSliderPanel(runnerTab, {
-      code: 'RUN-21', title: 'Gravity Launch Angle', unit: '°', min: -90, max: 90, step: 1, value: params.runner.gravity.launchAngleOffsetDeg, format: v => Math.round(v),
-      visible: params.runner.motionMode === 'Gravity Orbit',
-      onInput: v => { params.runner.gravity.launchAngleOffsetDeg = v; seedGravityRunner(); }
-    });
-    gravityOnlyPanels.push(gravityStartDistPanel, gravityStartAnglePanel, gravitySpeedRatioPanel, gravityLaunchAnglePanel);
+      const parentOptions = ['NONE'].concat(
+        params.objects.filter(o => o.id !== obj.id && !isDescendantOf(o.id, obj.id, byId)).map(o => o.id)
+      );
+      const parentLabels = { NONE: 'None (Fixed Center)' };
+      params.objects.forEach(o => { parentLabels[o.id] = objectDisplayName(o); });
+      createSelectPanel(objectsTab, { code: 'OBJ-03', title: 'Parent', options: parentOptions, labels: parentLabels, value: obj.parentId || 'NONE', onChange: v => {
+        obj.parentId = v === 'NONE' ? null : v;
+        reseedObjectOrbit(obj);
+        rebuildHierarchyOrder();
+        renderObjectsTab();
+      }});
 
-    createColorPanel(runnerTab, { code: 'RUN-15', title: 'Runner Color', value: params.runner.color, onChange: c => {
-      params.runner.color = c;
-      runnerBodyMat.color.set(c);
-      limbMat.color.set(c);
-    }});
-    createTogglePanel(runnerTab, { code: 'RUN-16', title: 'Orbital Avoidance', value: params.runner.avoidance, onLabel: 'ACTIVE', offLabel: 'OFF', onChange: v => {
-      params.runner.avoidance = v;
-    }});
+      createSliderPanel(objectsTab, { code: 'OBJ-04', title: 'Mass', unit: '', min: meta.massRange[0], max: meta.massRange[1], step: (meta.massRange[1] - meta.massRange[0]) / 300, value: obj.mass, format: v => v.toFixed(2), onInput: v => {
+        obj.mass = v; // live: children pick up the new pull next physics tick, no reseed needed
+      }});
 
-    // 6. Camera — the observer's viewpoint onto everything above
+      createSliderPanel(objectsTab, { code: 'OBJ-05', title: 'Size', unit: 'u', min: meta.sizeRange[0], max: meta.sizeRange[1], step: (meta.sizeRange[1] - meta.sizeRange[0]) / 150, value: obj.size, format: v => v.toFixed(2), onInput: v => {
+        obj.size = v;
+        const rt = objectRuntime.get(obj.id);
+        if (rt) rt.root.scale.setScalar(1).multiplyScalar(v); // cheap in-place rescale, no rebuild
+      }});
+
+      createSelectPanel(objectsTab, { code: 'OBJ-06', title: 'Shape', options: ['Cube', 'Sphere', 'Prism', 'Starship', 'Custom'], value: obj.shape, onChange: v => {
+        obj.shape = v;
+        rebuildObjectVisual(obj.id);
+        renderObjectsTab();
+      }});
+      if (obj.shape === 'Custom') {
+        createFilePanel(objectsTab, { code: 'OBJ-07', title: 'Custom Model', accept: '.stl,.obj', visible: true, onChange: file => loadCustomObjectFile(obj.id, file) });
+      }
+
+      createColorPanel(objectsTab, { code: 'OBJ-08', title: 'Color', value: obj.color, onChange: c => {
+        obj.color = c;
+        const rt = objectRuntime.get(obj.id);
+        if (rt) rt.allMeshes.forEach(m => { if (m.material && m.material.color) m.material.color.set(c); });
+      }});
+
+      if (obj.parentId) {
+        createSliderPanel(objectsTab, { code: 'OBJ-09', title: 'Orbit Distance', unit: 'u', min: 2, max: 200, step: 0.5, value: obj.orbit.distance, format: v => v.toFixed(1), sub: true, onInput: v => {
+          obj.orbit.distance = v;
+          reseedObjectOrbit(obj);
+        }});
+        createSliderPanel(objectsTab, { code: 'OBJ-10', title: 'Orbit Speed', unit: '× circular', min: 0.1, max: 2.0, step: 0.05, value: obj.orbit.speedRatio, format: v => v.toFixed(2), sub: true, onInput: v => {
+          obj.orbit.speedRatio = v;
+          reseedObjectOrbit(obj);
+        }});
+        createSliderPanel(objectsTab, { code: 'OBJ-11', title: 'Orbit Angle', unit: '°', min: 0, max: 360, step: 1, value: obj.orbit.angleDeg, format: v => Math.round(v), sub: true, onInput: v => {
+          obj.orbit.angleDeg = v;
+          reseedObjectOrbit(obj);
+        }});
+      }
+
+      const deleteWrap = el('div', 'lcars-panel');
+      const { headerEl } = panelHeader('OBJ-12', 'Remove');
+      deleteWrap.appendChild(headerEl);
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'tool-text-button';
+      deleteBtn.textContent = 'Delete Object';
+      deleteBtn.disabled = params.objects.length <= 1;
+      deleteBtn.addEventListener('click', () => removeObject(obj.id));
+      deleteWrap.appendChild(deleteBtn);
+      objectsTab.appendChild(deleteWrap);
+    }
+
+    renderObjectsTab();
+
+    // 2. Camera — the observer's viewpoint onto the hierarchy above
     createSelectPanel(cameraTab, {
       code: 'CAM-01',
       title: 'Perspective',
-      options: ['Runner Tracking', 'Free Orbit Overview', 'Static Origin View', 'Manual Control'],
-      labels: {
-        'Runner Tracking': 'Runner',
-        'Free Orbit Overview': 'Free Orbit',
-        'Static Origin View': 'Static',
-        'Manual Control': 'Manual'
-      },
+      options: ['Free Orbit Overview', 'Follow Selected', 'Static Origin View', 'Manual Control'],
       value: params.camera.trackingMode,
       onChange: v => {
         params.camera.trackingMode = v;
         controls.enabled = (v === 'Manual Control');
         if (controls.enabled) {
-          // Pick up wherever the camera currently is instead of snapping
-          controls.target.set(0, runnerGroup.position.y, 0);
+          controls.target.set(0, 0, 0);
           controls.update();
         }
       }
@@ -2650,136 +2092,14 @@
       camera.fov = v;
       camera.updateProjectionMatrix();
     }});
-    createSliderPanel(cameraTab, { code: 'CAM-03', title: 'Follow Distance', unit: 'u', min: 2, max: 40, step: 0.5, value: params.camera.distance, format: v => v.toFixed(1), onInput: v => {
+    createSliderPanel(cameraTab, { code: 'CAM-03', title: 'Follow Distance', unit: 'u', min: 2, max: 60, step: 0.5, value: params.camera.distance, format: v => v.toFixed(1), onInput: v => {
       params.camera.distance = v;
     }});
-    createSliderPanel(cameraTab, { code: 'CAM-04', title: 'Follow Height', unit: 'u', min: 0.5, max: 20, step: 0.5, value: params.camera.height, format: v => v.toFixed(1), onInput: v => {
+    createSliderPanel(cameraTab, { code: 'CAM-04', title: 'Follow Height', unit: 'u', min: 0.5, max: 30, step: 0.5, value: params.camera.height, format: v => v.toFixed(1), onInput: v => {
       params.camera.height = v;
     }});
 
-    // 7. World — the reference frame first (Alignment), then the two
-    // things anchored to it (Floor, Sky): establish where "here" is
-    // before configuring what sits there.
-    //
-    // Alignment options are ordered by degrees of freedom, least to
-    // most: Source is a fixed point (zero freedom — it's always the
-    // origin), Orbital is a derived point (one freedom — it moves only
-    // as the orbitals' own height changes), XYZ is fully manual (three
-    // free coordinates, no dependency on any other entity). Displayed as
-    // "Orbital" but still stored as the value 'Cube' (see labels below),
-    // so this stays compatible with programs saved before the rename.
-    createSelectPanel(worldTab, {
-      code: 'WLD-01',
-      title: 'World Alignment',
-      options: ['Source', 'Cube', 'XYZ'],
-      labels: { Cube: 'Orbital' },
-      value: params.world.alignment,
-      onChange: v => {
-        params.world.alignment = v;
-        repositionGroundMeshes();
-        worldOffsetXPanel.setVisible(v === 'XYZ');
-        worldOffsetYPanel.setVisible(v === 'XYZ');
-        worldOffsetZPanel.setVisible(v === 'XYZ');
-      }
-    });
-    const worldOffsetXPanel = createSliderPanel(worldTab, {
-      code: 'WLD-02', title: 'World Offset X', unit: 'u', min: -150, max: 150, step: 1, value: params.world.offset.x, format: v => Math.round(v),
-      visible: params.world.alignment === 'XYZ', sub: true,
-      onInput: v => {
-        params.world.offset.x = v;
-        repositionGroundMeshes();
-      }
-    });
-    const worldOffsetYPanel = createSliderPanel(worldTab, {
-      code: 'WLD-03', title: 'World Offset Y', unit: 'u', min: -50, max: 50, step: 1, value: params.world.offset.y, format: v => Math.round(v),
-      visible: params.world.alignment === 'XYZ', sub: true,
-      onInput: v => {
-        params.world.offset.y = v;
-        repositionGroundMeshes();
-      }
-    });
-    const worldOffsetZPanel = createSliderPanel(worldTab, {
-      code: 'WLD-04', title: 'World Offset Z', unit: 'u', min: -150, max: 150, step: 1, value: params.world.offset.z, format: v => Math.round(v),
-      visible: params.world.alignment === 'XYZ', sub: true,
-      onInput: v => {
-        params.world.offset.z = v;
-        repositionGroundMeshes();
-      }
-    });
-    // Floor and sky always share one shape — there's deliberately no
-    // separate Floor/Sky geometry control, so the two can't drift apart.
-    createSelectPanel(worldTab, {
-      code: 'WLD-05',
-      title: 'World Geometry',
-      options: ['Square', 'Radial', 'Hemisphere', 'Cube'],
-      value: params.world.geometry,
-      onChange: v => {
-        params.world.geometry = v;
-        rebuildGroundMesh('floor');
-        rebuildGroundMesh('sky');
-      }
-    });
-
-    // Floor & Sky. Identical option shape, so one builder wires up both,
-    // just pointed at 'floor' vs 'sky' and their own code prefix.
-    function buildGroundPanels(tab, kind, prefix, label) {
-      const config = groundConfig(kind);
-
-      createSliderPanel(tab, { code: prefix + '-01', title: label + ' Size', unit: 'u', min: 20, max: 600, step: 10, value: config.size, format: v => Math.round(v), onInput: v => {
-        config.size = v;
-        rebuildGroundMesh(kind);
-      }});
-      createSelectPanel(tab, {
-        code: prefix + '-02',
-        title: label + ' Surface',
-        options: ['Off', 'Color', 'Grid', 'Image'],
-        value: config.surface,
-        onChange: v => {
-          config.surface = v;
-          rebuildGroundMesh(kind);
-          colorPanel.setVisible(v === 'Color' || v === 'Grid');
-          gridFreqPanel.setVisible(v === 'Grid');
-          gridSizePanel.setVisible(v === 'Grid');
-          imagePanel.setVisible(v === 'Image');
-        }
-      });
-      const colorPanel = createColorPanel(tab, {
-        code: prefix + '-03', title: label + ' Color', value: config.color,
-        visible: config.surface === 'Color' || config.surface === 'Grid',
-        onChange: c => {
-          config.color = c;
-          rebuildGroundMesh(kind);
-        }
-      });
-      const gridFreqPanel = createSliderPanel(tab, {
-        code: prefix + '-04', title: 'Grid Frequency', unit: '×', min: 2, max: 40, step: 1, value: config.gridFrequency, format: v => Math.round(v),
-        visible: config.surface === 'Grid', sub: true,
-        onInput: v => {
-          config.gridFrequency = Math.round(v);
-          rebuildGroundMesh(kind);
-        }
-      });
-      const gridSizePanel = createSliderPanel(tab, {
-        code: prefix + '-05', title: 'Grid Line Size', unit: 'px', min: 1, max: 12, step: 1, value: config.gridSize, format: v => Math.round(v),
-        visible: config.surface === 'Grid', sub: true,
-        onInput: v => {
-          config.gridSize = Math.round(v);
-          rebuildGroundMesh(kind);
-        }
-      });
-      const imagePanel = createFilePanel(tab, {
-        code: prefix + '-06',
-        title: label + ' Image',
-        accept: 'image/*',
-        visible: config.surface === 'Image',
-        onChange: file => loadGroundImage(kind, file)
-      });
-    }
-
-    buildGroundPanels(worldTab, 'floor', 'FLR', 'Floor');
-    buildGroundPanels(worldTab, 'sky', 'SKY', 'Sky');
-
-    // 8. Memory — "Computer, save current program." Local named saves, plus
+    // 3. Memory — "Computer, save current program." Local named saves, plus
     // a portable export/import code for taking a program to another browser.
     function createSaveProgramPanel(container, onSave) {
       const panel = el('div', 'lcars-panel');
@@ -2842,8 +2162,6 @@
           loadBtn.className = 'tool-program-load';
           loadBtn.textContent = 'Load';
           loadBtn.setAttribute('aria-label', 'Load saved program ' + name);
-          // No playTick() here (or on Import) — loadProgram() reloads the
-          // page immediately, cutting the blip off before it's audible.
           loadBtn.addEventListener('click', () => loadProgram(name));
           row.appendChild(loadBtn);
 
@@ -2950,135 +2268,6 @@
     createExportPanel(memoryTab);
     createImportPanel(memoryTab);
 
-    // --- Orbital Collision Avoidance ---
-    // The runner's path is authored freely and can cross the orbit ring;
-    // rather than letting it clip through an orbital, every frame checks
-    // the runner's current world position against each orbital's current
-    // (rotating) world position using a simple bounding-sphere "hitbox" —
-    // cheap and rotation-invariant, so it doesn't care how the box is
-    // currently oriented. A detected threat nudges the runner sideways, off
-    // its nominal path line, but the nudge itself eases toward its target
-    // via AVOID_RAMP_RATE rather than snapping — so the dodge reads as
-    // tentative the moment a threat appears and only commits to a full,
-    // confident sidestep if it holds. It eases back to zero the same way
-    // once clear, so the runner settles smoothly back onto its authored path.
-    const AVOID_SAFETY_MARGIN = 1.5; // extra clearance added to both hitboxes' radii
-    const AVOID_RAMP_RATE = 2.5;     // higher = faster to react and to settle back
-    const cubeWorldPos = new THREE.Vector3();
-    const runnerWorldPos = new THREE.Vector3();
-
-    // Bounding-sphere radius covering the orbital's full box regardless of
-    // its current facing (lookAt rotation) — the half-diagonal of the
-    // scaled box. cogSize scales X/Z (orbitGroup.scale), not Y.
-    function orbitalRadius() {
-      return 0.5 * Math.sqrt(
-        Math.pow(params.cube.sizeX * params.orbit.cogSize, 2) +
-        Math.pow(params.cube.sizeY, 2) +
-        Math.pow(params.cube.sizeZ * params.orbit.cogSize, 2)
-      );
-    }
-
-    // Advances the eased dodge offset for one frame and returns this
-    // frame's avoidance urgency (0 = clear, 1 = as close as the hitboxes
-    // allow), which the caller uses to also ease off the runner's forward
-    // speed while a dodge is in progress.
-    function updateOrbitalAvoidance(delta, pathX, pathY, pathZ) {
-      const ease = clamp(AVOID_RAMP_RATE * delta, 0, 1);
-
-      if (!params.runner.avoidance || cubes.length === 0) {
-        avoidOffsetX += (0 - avoidOffsetX) * ease;
-        avoidOffsetZ += (0 - avoidOffsetZ) * ease;
-        return 0;
-      }
-
-      // Threat detection deliberately uses the *nominal* path position, not
-      // pathX/Z plus the dodge already applied — folding the accumulated
-      // offset back into the distance check would let the dodge dilute its
-      // own trigger (moving away lowers the measured urgency, which eases
-      // the offset back down, which raises the urgency again...), settling
-      // short of actually clearing the hitbox instead of committing fully.
-      runnerWorldPos.set(pathX, pathY, pathZ);
-      const rRadius = 0.6 * params.runner.size;
-      const oRadius = orbitalRadius();
-      const threatRadius = rRadius + oRadius + AVOID_SAFETY_MARGIN;
-
-      // Only the single strongest threat steers this frame — with orbitals
-      // evenly spaced around one ring, more than one is rarely in range at
-      // once, and reacting to just the closest keeps the dodge decisive
-      // instead of averaging out opposing pushes.
-      let strongest = null;
-      let strongestUrgency = 0;
-      cubes.forEach(cube => {
-        cube.getWorldPosition(cubeWorldPos);
-        const dist = runnerWorldPos.distanceTo(cubeWorldPos);
-        if (dist >= threatRadius) return;
-        const urgency = clamp(1 - dist / threatRadius, 0, 1);
-        if (urgency > strongestUrgency) {
-          strongestUrgency = urgency;
-          strongest = cube;
-        }
-      });
-
-      let targetX = 0, targetZ = 0;
-      if (strongest) {
-        strongest.getWorldPosition(cubeWorldPos);
-        let dx = runnerWorldPos.x - cubeWorldPos.x;
-        let dz = runnerWorldPos.z - cubeWorldPos.z;
-        let len = Math.hypot(dx, dz);
-        if (len < 0.001) {
-          // Degenerate (exact overlap) — dodge perpendicular to the current
-          // travel direction instead of dividing by zero.
-          dx = -runnerForward.z; dz = runnerForward.x; len = 1;
-        }
-        const dodgeDistance = rRadius + oRadius + 2;
-        targetX = (dx / len) * dodgeDistance * strongestUrgency;
-        targetZ = (dz / len) * dodgeDistance * strongestUrgency;
-      }
-
-      avoidOffsetX += (targetX - avoidOffsetX) * ease;
-      avoidOffsetZ += (targetZ - avoidOffsetZ) * ease;
-
-      return strongestUrgency;
-    }
-
-    // --- Runner: Gravity Orbit motion mode ---
-    // The runner as a real physics body, launched from params.runner.gravity
-    // and integrated every frame under the exact same gravitationalParameter()
-    // the orbitals use — an emergent trajectory instead of authored waypoints.
-    let gravityRunnerState = null; // { x, z, vx, vz }, plane shared with the orbitals
-
-    function seedGravityRunner() {
-      const mu = gravitationalParameter();
-      const g = params.runner.gravity;
-      const angle = g.startAngleDeg * Math.PI / 180;
-      const x = Math.cos(angle) * g.startDistance;
-      const z = Math.sin(angle) * g.startDistance;
-      const vCircular = Math.sqrt(mu / g.startDistance);
-      const speed = g.speedRatio * vCircular;
-      // Tangent direction at this point, then rotated by the launch angle
-      // offset: 0° = tangential (prograde orbit), ±90° = straight in/out.
-      const tangentAngle = angle + Math.PI / 2;
-      const launchAngle = tangentAngle + (g.launchAngleOffsetDeg * Math.PI / 180);
-      gravityRunnerState = {
-        x, z,
-        vx: Math.cos(launchAngle) * speed,
-        vz: Math.sin(launchAngle) * speed
-      };
-    }
-
-    // A hyperbolic/parabolic launch (speedRatio ≳ 1.414 tangential)
-    // genuinely escapes and never comes back — rather than leaving the
-    // runner gone for good, relaunch it once it's far enough away, the
-    // same spirit as Scripted mode's Loop/Boomerang keeping the runner
-    // perpetually visible instead of a one-shot that just vanishes.
-    const GRAVITY_RUNNER_MAX_DIST = 260;
-    function updateGravityRunner(delta) {
-      if (!gravityRunnerState) seedGravityRunner();
-      integrateGravity(gravityRunnerState, delta, gravitationalParameter());
-      const dist = Math.hypot(gravityRunnerState.x, gravityRunnerState.z);
-      if (dist > GRAVITY_RUNNER_MAX_DIST) seedGravityRunner();
-    }
-
     // --- Animation Loop ---
     const clock = new THREE.Clock();
 
@@ -3088,119 +2277,36 @@
       const delta = clock.getDelta();
       const elapsedTime = clock.getElapsedTime();
 
-      // Orbit Motion — real simulated gravity (see the Shared Gravity Law
-      // section) rather than a fixed rotation. Each orbital's own
-      // userData.gState is integrated independently, so an elliptical
-      // orbit's angular rate isn't locked to a rigid rotating group.
-      const orbitMu = gravitationalParameter();
-      cubes.forEach(cube => {
-        const state = cube.userData.gState;
-        if (!state) return;
-        integrateGravity(state, delta, orbitMu);
-        cube.position.set(state.x, 0, state.z);
-        cube.lookAt(0, 0, 0);
-      });
-
-      // Runner Motion — 'Scripted Path' (authored waypoints, unchanged
-      // from before) or 'Gravity Orbit' (an emergent trajectory under the
-      // same gravity law as the orbitals — see Shared Gravity Law above
-      // and seedGravityRunner()/updateGravityRunner() below).
-      if (params.runner.active && params.runner.motionMode === 'Gravity Orbit') {
-        updateGravityRunner(delta);
-        const rawX = gravityRunnerState.x, rawY = 0, rawZ = gravityRunnerState.z;
-        lastAvoidUrgency = updateOrbitalAvoidance(delta, rawX, rawY, rawZ);
-        runnerGroup.position.set(rawX + avoidOffsetX, rawY, rawZ + avoidOffsetZ);
-
-        // Face the actual direction of travel — the velocity vector IS
-        // the tangent of the curving trajectory, no separate lookahead
-        // sample needed the way the sampled scripted path requires.
-        const vx = gravityRunnerState.vx, vz = gravityRunnerState.vz;
-        const speed = Math.hypot(vx, vz);
-        if (speed > 1e-4) {
-          runnerForward.x = vx / speed;
-          runnerForward.z = vz / speed;
-          runnerGroup.lookAt(rawX + vx + avoidOffsetX, rawY, rawZ + vz + avoidOffsetZ);
-        }
-
-        // Articulated leg swing (Rectifier shape only) — driven by the
-        // runner's actual current physics speed instead of the Scripted
-        // mode's Run Speed slider, which has no meaning here.
-        if (runnerLegs) {
-          const swing = Math.sin(elapsedTime * Math.max(speed, 0.5) * 1.5) * 0.6;
-          runnerLegs.left.rotation.x = swing;
-          runnerLegs.right.rotation.x = -swing;
-        }
-      } else if (params.runner.active && pathSampler && pathSampler.length > 0) {
-        // Slow the advance while actively dodging an orbital (urgency
-        // ramped up by last frame's avoidance check) — cautious near a
-        // hazard, back to full speed the moment it's clear.
-        const speedScale = 1 - 0.6 * lastAvoidUrgency;
-        runnerProgress += params.runner.speed * speedScale * delta * runnerDirection;
-
-        if (params.runner.path.mode === 'Loop') {
-          if (runnerProgress > pathSampler.length) runnerProgress -= pathSampler.length;
-          else if (runnerProgress < 0) runnerProgress += pathSampler.length;
-        } else if (params.runner.path.mode === 'Boomerang') {
-          if (runnerProgress >= pathSampler.length) { runnerProgress = pathSampler.length; runnerDirection = -1; }
-          else if (runnerProgress <= 0) { runnerProgress = 0; runnerDirection = 1; }
-        } else { // Play Once
-          if (runnerProgress >= pathSampler.length) {
-            runnerProgress = pathSampler.length;
-            params.runner.active = false;
-            enableRunPanel.refresh(false);
-          }
-        }
-
-        // rawPos is the nominal, authored path position — height-above-
-        // ground, so groundLevelY() lands it on the orbitals' bottom plane
-        // (or wherever World Alignment currently anchors "ground").
-        const rawPos = pathSampler.pointAt(runnerProgress);
-        const groundY = groundLevelY();
-        lastAvoidUrgency = updateOrbitalAvoidance(delta, rawPos.x, rawPos.y + groundY, rawPos.z);
-        runnerGroup.position.set(rawPos.x + avoidOffsetX, rawPos.y + groundY, rawPos.z + avoidOffsetZ);
-
-        // Face the direction of travel (flattened to the XZ plane) so
-        // corners actually read as turns, not just an invisible path shape
-        const lookAheadDist = clamp(runnerProgress + 0.5 * runnerDirection, 0, pathSampler.length);
-        const ahead = pathSampler.pointAt(lookAheadDist);
-        const dx = ahead.x - rawPos.x, dz = ahead.z - rawPos.z;
-        if (dx * dx + dz * dz > 1e-6) {
-          const len = Math.hypot(dx, dz);
-          runnerForward.x = dx / len;
-          runnerForward.z = dz / len;
-          runnerGroup.lookAt(ahead.x + avoidOffsetX, rawPos.y + groundY, ahead.z + avoidOffsetZ);
-        }
-
-        // Articulated leg swing (Rectifier shape only)
-        if (runnerLegs) {
-          const swing = Math.sin(elapsedTime * params.runner.speed * 1.5) * 0.6;
-          runnerLegs.left.rotation.x = swing;
-          runnerLegs.right.rotation.x = -swing;
-        }
-      }
+      updateObjectsPhysics(delta);
 
       // Camera Positioning Modes
-      if (params.camera.trackingMode === 'Runner Tracking') {
-        // Chase camera: trail behind the runner along its actual heading
-        const camX = runnerGroup.position.x - runnerForward.x * params.camera.distance;
-        const camZ = runnerGroup.position.z - runnerForward.z * params.camera.distance;
-        const camY = runnerGroup.position.y + params.camera.height;
-        camera.position.set(camX, camY, camZ);
-        camera.lookAt(runnerGroup.position.x, runnerGroup.position.y + 1, runnerGroup.position.z);
+      const rootObj = hierarchyOrderCache[0];
+      const maxOrbitDistance = params.objects.reduce((m, o) => Math.max(m, o.orbit.distance || 0), 20);
+
+      if (params.camera.trackingMode === 'Follow Selected') {
+        const targetId = selectedObjectId || (rootObj && rootObj.id);
+        const rt = targetId ? objectRuntime.get(targetId) : null;
+        if (rt) {
+          let fx = 0.7, fz = 0.7; // default trailing direction for a stationary (e.g. root) target
+          if (rt.gState) {
+            const sp = Math.hypot(rt.gState.vx, rt.gState.vz);
+            if (sp > 1e-4) { fx = rt.gState.vx / sp; fz = rt.gState.vz / sp; }
+          }
+          camera.position.set(rt.absX - fx * params.camera.distance, rt.absY + params.camera.height, rt.absZ - fz * params.camera.distance);
+          camera.lookAt(rt.absX, rt.absY, rt.absZ);
+        }
       } else if (params.camera.trackingMode === 'Free Orbit Overview') {
-        const angle = elapsedTime * 0.1;
-        const dist = params.orbit.radius * 2.2;
-        camera.position.set(Math.cos(angle) * dist, 25, Math.sin(angle) * dist);
+        const angle = elapsedTime * 0.06;
+        const dist = maxOrbitDistance * 1.3;
+        camera.position.set(Math.cos(angle) * dist, dist * 0.4, Math.sin(angle) * dist);
         camera.lookAt(0, 0, 0);
       } else if (params.camera.trackingMode === 'Static Origin View') {
-        camera.position.set(0, 5, params.orbit.radius * 1.8);
+        camera.position.set(0, maxOrbitDistance * 0.25, maxOrbitDistance * 1.1);
         camera.lookAt(0, 0, 0);
       } else if (params.camera.trackingMode === 'Manual Control') {
-        // Mouse-drag / touch-drag orbit, wheel / pinch zoom
         controls.update();
       }
 
-      // Keep the selection outline glued to its (possibly moving) target
       if (selectionHelper) {
         scene.updateMatrixWorld();
         selectionHelper.update();
