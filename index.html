@@ -855,6 +855,27 @@
       }
     }
 
+    // The Source/Orbit/Runner/Floor/Sky schema this replaced has no
+    // `objects` array — a save from before that rewrite would load without
+    // crashing (deepMerge just wouldn't find one) but would silently show
+    // the default solar system instead of whatever it used to represent,
+    // which is confusing to leave sitting in the saved-programs list. Prune
+    // those out once, up front, so Stored Programs only ever lists saves
+    // this schema can actually restore. Idempotent — a no-op once run.
+    function pruneLegacyPrograms() {
+      const programs = listPrograms();
+      let changed = false;
+      Object.keys(programs).forEach(name => {
+        const snap = programs[name];
+        if (!snap || !Array.isArray(snap.objects) || snap.objects.length === 0) {
+          delete programs[name];
+          changed = true;
+        }
+      });
+      if (changed) safeLocalStorageSet(MEMORY_KEY, JSON.stringify(programs));
+    }
+    pruneLegacyPrograms();
+
     // --- LCARS Design Tokens ---
     // One named palette, reused everywhere a "which category is this"
     // color decision gets made — the tab accents, the selection highlight,
