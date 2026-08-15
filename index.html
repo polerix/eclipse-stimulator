@@ -1445,8 +1445,16 @@
       params.objects.push(obj);
       createObjectRuntime(obj);
       rebuildHierarchyOrder();
-      focusedObjectId = id;
-      renderObjectsTab();
+      // Select it, not just focus it — see the chip click handler's
+      // comment in renderObjectsTab() for why that distinction matters
+      // (Camera → Follow Selected only ever looks at the real selection).
+      const rt = objectRuntime.get(id);
+      if (rt) {
+        setSelection({ root: rt.root, label: objectDisplayName(obj), objectId: id });
+      } else {
+        focusedObjectId = id;
+        renderObjectsTab();
+      }
       playTick();
       return obj;
     }
@@ -2145,9 +2153,23 @@
         chip.style.background = dimHex(obj.color, 0.8);
         chip.setAttribute('aria-pressed', obj.id === focusedObjectId ? 'true' : 'false');
         chip.addEventListener('click', () => {
-          playTick();
-          focusedObjectId = obj.id;
-          renderObjectsTab();
+          // Picking a chip is "selecting" that object exactly like a
+          // double-tap in the 3D scene is — not a separate, weaker
+          // "just show its panel" action. Routing through setSelection()
+          // (rather than only setting focusedObjectId) is what makes
+          // Camera → Follow Selected, the selection highlight, and the
+          // selection bar all pick it up too; setSelection() itself
+          // already re-focuses+re-renders this tab, so there's nothing
+          // left to do here afterward.
+          const rt = objectRuntime.get(obj.id);
+          if (rt) {
+            setSelection({ root: rt.root, label: objectDisplayName(obj), objectId: obj.id });
+            playConfirm();
+          } else {
+            focusedObjectId = obj.id;
+            renderObjectsTab();
+            playTick();
+          }
         });
         chipRow.appendChild(chip);
       });
