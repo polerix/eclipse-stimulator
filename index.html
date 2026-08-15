@@ -55,7 +55,17 @@
     .lcars-corner-panel {
       position: fixed;
       width: 296px;
-      max-height: calc(50vh - 30px);
+      /* Generous by default — a panel opened by itself gets nearly the
+         full viewport height, since nothing below/above it on the same
+         edge needs the room. Only when its same-side sibling (the other
+         top/bottom panel sharing this corner's edge) is ALSO open does
+         --half kick in, splitting the edge 50/50 so the two don't
+         overlap — see pairCornerPanels(). Without this, every panel was
+         capped at half the viewport at all times, which cut off a
+         panel's own last controls (e.g. Camera's Follow Height slider)
+         behind an easy-to-miss internal scroll even when it was the only
+         thing open and had the whole screen to itself. */
+      max-height: calc(100vh - 40px);
       display: flex;
       flex-direction: column;
       font-family: 'Antonio', 'Arial Narrow', sans-serif;
@@ -67,6 +77,8 @@
          never triggers the browser's page-zoom gesture. */
       touch-action: manipulation;
     }
+
+    .lcars-corner-panel--half { max-height: calc(50vh - 30px); }
 
     .lcars-corner-panel--tl { top: 20px; left: 20px; border-radius: 2px 2px 20px 2px; }
     .lcars-corner-panel--tr { top: 20px; right: 20px; border-radius: 2px 2px 2px 20px; }
@@ -2382,11 +2394,34 @@
         toggleBtn.setAttribute('aria-expanded', v ? 'true' : 'false');
         if (v) playOpen(); else playDismiss(); // no-ops silently while audio is off
       }
-      toggleBtn.addEventListener('click', () => setOpen(!open));
 
       const instance = { panel, headerRow, toggleBtn, body, setOpen, isOpen: () => open };
+      // Routed through instance.setOpen (not the local setOpen directly) so
+      // that pairCornerPanels()'s wrapping — attached to this same instance
+      // object after both panels in a pair exist — is what actually fires
+      // on a real click, not the bare unwrapped version captured here.
+      toggleBtn.addEventListener('click', () => instance.setOpen(!open));
       ALL_CORNER_PANELS.push(instance);
       return instance;
+    }
+
+    // Couples the two panels sharing one screen edge (top/bottom on the
+    // same side) so they only give up height to each other when they
+    // actually need to. Both get the full calc(100vh - 40px) budget by
+    // default (see .lcars-corner-panel); --half only applies while BOTH
+    // of a pair are open, at which point they split the edge 50/50 so
+    // neither's body grows into the other's. Cross-side pairs (e.g.
+    // Objects + Camera) never collide regardless, so they're left alone.
+    function pairCornerPanels(a, b) {
+      function sync() {
+        const bothOpen = a.isOpen() && b.isOpen();
+        a.panel.classList.toggle('lcars-corner-panel--half', bothOpen);
+        b.panel.classList.toggle('lcars-corner-panel--half', bothOpen);
+      }
+      const setOpenA = a.setOpen, setOpenB = b.setOpen;
+      a.setOpen = v => { setOpenA(v); sync(); };
+      b.setOpen = v => { setOpenB(v); sync(); };
+      sync();
     }
 
     document.addEventListener('keydown', (e) => {
@@ -2398,6 +2433,8 @@
     const appearancePanel = createCornerPanel({ id: 'appearance', corner: 'bl', label: 'Appearance', accent: LCARS_PALETTE.gold });
     const cameraPanel = createCornerPanel({ id: 'camera', corner: 'tr', label: 'Camera', accent: LCARS_PALETTE.ice });
     const memoryPanel = createCornerPanel({ id: 'memory', corner: 'br', label: 'Files', accent: LCARS_PALETTE.plum });
+    pairCornerPanels(objectsPanel, appearancePanel);
+    pairCornerPanels(cameraPanel, memoryPanel);
 
     // Camera's header is always on screen (open or collapsed), so the
     // stardate readout and the sound toggle live there rather than buried
