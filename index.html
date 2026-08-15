@@ -742,11 +742,17 @@
         distance: 12,
         height: 3.5
       },
+      // How every object's surface (except a Singularity, always unlit) is
+      // shaded — see buildObjectMaterial(). 'Shaded' = normal PBR gradient
+      // response, 'Posterized' = 3-band cel/toon shading, 'Flat Light' =
+      // no shading at all, flat color regardless of light angle.
+      lightingMode: 'Shaded',
       // Every stellar object: { id, name, type, parentId, mass, size,
-      // shape, color, orbit: { distance, speedRatio, angleDeg } }.
-      // parentId: null means "fixed at the universal center" — normally
-      // true of exactly one root object (e.g. the Sun). Populated with a
-      // default Terran solar system below, after OBJECT_TYPES is defined.
+      // shape, color, orbit: { distance, speedRatio, angleDeg },
+      // pathColor, pathVisible }. parentId: null means "fixed at the
+      // universal center" — normally true of exactly one root object
+      // (e.g. the Sun). Populated with a default Terran solar system
+      // below, after OBJECT_TYPES is defined.
       objects: []
     };
 
@@ -1027,13 +1033,56 @@
       }
     }
 
+    // --- Lighting Mode ---
+    // Global shading style for every object's surface, except a
+    // Singularity (always unlit — see buildObjectVisual) and the path
+    // lines below (THREE.Line materials are always unlit regardless).
+    // 'Posterized' uses MeshToonMaterial with a hand-built 3-step gradient
+    // map, so the surface only ever renders one of 3 discrete tones
+    // instead of a smooth gradient — genuine cel/toon shading, the same
+    // mechanism real toon-shaded 3D work uses, not a shader hack.
+    let toonGradientMap = null;
+    function ensureToonGradientMap() {
+      if (toonGradientMap) return toonGradientMap;
+      const steps = 3;
+      const canvas = document.createElement('canvas');
+      canvas.width = steps;
+      canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      for (let i = 0; i < steps; i++) {
+        const v = Math.round((i / (steps - 1)) * 255);
+        ctx.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+        ctx.fillRect(i, 0, 1, 1);
+      }
+      const tex = new THREE.CanvasTexture(canvas);
+      // Nearest (not linear) filtering is what keeps the bands sharp —
+      // without it the GPU would smoothly interpolate right back to a
+      // regular gradient between the 3 texels.
+      tex.minFilter = THREE.NearestFilter;
+      tex.magFilter = THREE.NearestFilter;
+      toonGradientMap = tex;
+      return tex;
+    }
+
+    function buildObjectMaterial(color) {
+      switch (params.lightingMode) {
+        case 'Flat Light':
+          return new THREE.MeshBasicMaterial({ color });
+        case 'Posterized':
+          return new THREE.MeshToonMaterial({ color, gradientMap: ensureToonGradientMap() });
+        case 'Shaded':
+        default:
+          return new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.15 });
+      }
+    }
+
     // A stylized saucer/engineering-hull/twin-nacelle silhouette — built
     // from primitives, not a real Enterprise model (no such asset is
     // available here to load). Reads as "a starship" at a glance without
     // claiming to be a faithful reproduction.
     function buildStarshipGroup(color) {
       const group = new THREE.Group();
-      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.35 });
+      const mat = buildObjectMaterial(color);
 
       const saucer = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.12, 24), mat);
       saucer.position.set(0, 0.15, 0.3);
@@ -1121,14 +1170,15 @@
           normalizeCustomObject(root);
         } else {
           // Placeholder until a model is uploaded — never a crash, just a re-upload prompt.
-          root = new THREE.Mesh(buildShapeGeometry('Cube'), new THREE.MeshStandardMaterial({ color: obj.color, roughness: 0.4, metalness: 0.15 }));
+          root = new THREE.Mesh(buildShapeGeometry('Cube'), buildObjectMaterial(obj.color));
         }
       } else if (obj.type === 'SINGULARITY') {
-        // Unlit on purpose — a black hole doesn't reflect or emit light,
-        // the opposite of the Sun's attached PointLight above.
+        // Unlit on purpose, regardless of Lighting Mode — a black hole
+        // doesn't reflect or emit light, the opposite of the Sun's
+        // attached PointLight above.
         root = new THREE.Mesh(buildShapeGeometry(obj.shape), new THREE.MeshBasicMaterial({ color: obj.color }));
       } else {
-        root = new THREE.Mesh(buildShapeGeometry(obj.shape), new THREE.MeshStandardMaterial({ color: obj.color, roughness: 0.4, metalness: 0.15 }));
+        root = new THREE.Mesh(buildShapeGeometry(obj.shape), buildObjectMaterial(obj.color));
       }
       root.scale.multiplyScalar(obj.size);
 
@@ -1153,6 +1203,110 @@
         if (m.material && m.material.dispose) m.material.dispose();
       });
       scene.remove(rt.root);
+    }
+
+    // Swaps every non-Singularity object's material in place for the
+    // newly-selected Lighting Mode — cheap (materials only, no geometry
+    // rebuild) since Custom/Starship composites already expose every
+    // sub-mesh via allMeshes.
+    function applyLightingModeToAllObjects() {
+      params.objects.forEach(obj => {
+        if (obj.type === 'SINGULARITY') return;
+        const rt = objectRuntime.get(obj.id);
+        if (!rt) return;
+        rt.allMeshes.forEach(mesh => {
+          if (mesh.material && mesh.material.dispose) mesh.material.dispose();
+          mesh.material = buildObjectMaterial(obj.color);
+        });
+      });
+    }
+
+    // --- Orbit Path Visualization ---
+    // Draws an object's *exact* orbital shape — the real conic section
+    // implied by its current mass/distance/speed, not an approximated
+    // trail — as a static line around its parent. This is possible without
+    // deriving the general orbital-element (eccentricity-vector) formula
+    // because every orbit here is seeded with a purely tangential launch
+    // (see seedOrbitState), which is exactly the condition that defines an
+    // apsis (periapsis if speedRatio ≥ 1, apoapsis if < 1) — so the whole
+    // shape drops out of the standard focus-at-origin polar conic equation
+    // r(θ) = p / (1 + e·cos(θ − θ_periapsis)) with the parent's local
+    // origin as the shared focus. The shape only needs recomputing when
+    // the seed conditions themselves change (Distance/Speed/Angle/Parent/
+    // Mass) — two-body motion conserves it exactly in between, so it's
+    // never touched per-frame, only the line's position (to follow a
+    // moving parent) is.
+    function closedConicPoints(a, e, periapsisAngle, segments) {
+      const p = a * (1 - e * e);
+      const points = [];
+      for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        const r = p / (1 + e * Math.cos(theta));
+        const worldAngle = periapsisAngle + theta;
+        points.push({ x: Math.cos(worldAngle) * r, z: Math.sin(worldAngle) * r });
+      }
+      return points;
+    }
+
+    function openConicPoints(e, semiLatusRectum, periapsisAngle, segments) {
+      const thetaMax = Math.acos(Math.max(-1, Math.min(1, -1 / e))) * 0.98; // stop just short of the asymptote
+      const points = [];
+      for (let i = 0; i <= segments; i++) {
+        const theta = -thetaMax + (i / segments) * (2 * thetaMax);
+        const r = semiLatusRectum / (1 + e * Math.cos(theta));
+        const worldAngle = periapsisAngle + theta;
+        points.push({ x: Math.cos(worldAngle) * r, z: Math.sin(worldAngle) * r });
+      }
+      return points;
+    }
+
+    function computeOrbitShapePoints(mu, distance, angleDeg, speedRatio) {
+      const r0 = distance;
+      const v0 = speedRatio * Math.sqrt(mu / r0);
+      const energy = 0.5 * v0 * v0 - mu / r0;
+      const angleRad = angleDeg * Math.PI / 180;
+      const periapsisAngle = speedRatio >= 1 ? angleRad : angleRad + Math.PI;
+      const SEGMENTS = 96;
+      if (Math.abs(energy) < 1e-6) {
+        // Parabolic (the razor's-edge escape case) — an open arc, same
+        // treatment as hyperbolic, not a closed loop.
+        return openConicPoints(1, r0 * 2, periapsisAngle, SEGMENTS);
+      }
+      const a = -mu / (2 * energy);
+      const e = Math.abs(1 - r0 / a);
+      if (a > 0) return closedConicPoints(a, e, periapsisAngle, SEGMENTS);
+      return openConicPoints(e, a * (1 - e * e), periapsisAngle, SEGMENTS);
+    }
+
+    const orbitPathLines = new Map(); // object id -> THREE.Line
+
+    function disposeOrbitPathLine(id) {
+      const line = orbitPathLines.get(id);
+      if (!line) return;
+      scene.remove(line);
+      line.geometry.dispose();
+      line.material.dispose();
+      orbitPathLines.delete(id);
+    }
+
+    // (Re)builds the visible orbit-path line for one object from its
+    // *current* seed conditions — called whenever those conditions change,
+    // and whenever the path is first switched on. A no-op (with cleanup)
+    // for anything without a parent/orbit, since there's no shape to draw.
+    function rebuildOrbitPathLine(obj) {
+      disposeOrbitPathLine(obj.id);
+      if (!obj.pathVisible) return;
+      const parentRt = obj.parentId ? objectRuntime.get(obj.parentId) : null;
+      if (!parentRt || !(obj.orbit.distance > 0)) return;
+      const mu = Math.max(0.5, parentRt.config.mass);
+      const localPoints = computeOrbitShapePoints(mu, obj.orbit.distance, obj.orbit.angleDeg, obj.orbit.speedRatio);
+      const points3D = localPoints.map(p => new THREE.Vector3(p.x, 0, p.z));
+      const geometry = new THREE.BufferGeometry().setFromPoints(points3D);
+      const material = new THREE.LineBasicMaterial({ color: hexToNum(obj.pathColor || obj.color), transparent: true, opacity: 0.75 });
+      const line = new THREE.Line(geometry, material);
+      line.position.set(parentRt.absX || 0, parentRt.absY || 0, parentRt.absZ || 0);
+      scene.add(line);
+      orbitPathLines.set(obj.id, line);
     }
 
     // Structural rebuild (shape/model changed) — Size and Color changes are
@@ -1193,10 +1347,14 @@
       const parentRt = obj.parentId ? objectRuntime.get(obj.parentId) : null;
       if (!parentRt || !(obj.orbit.distance > 0)) {
         rt.gState = null; // fixed at the parent's position (or at the universal center if no parent)
+        disposeOrbitPathLine(obj.id);
         return;
       }
       const mu = Math.max(0.5, parentRt.config.mass);
       rt.gState = seedOrbitState(mu, obj.orbit.distance, obj.orbit.angleDeg, obj.orbit.speedRatio);
+      // Keep an already-lit path in sync with the new seed conditions; a
+      // still-off one stays off (rebuildOrbitPathLine no-ops on !pathVisible).
+      rebuildOrbitPathLine(obj);
     }
 
     function createObjectRuntime(obj) {
@@ -1209,6 +1367,7 @@
       const rt = objectRuntime.get(id);
       if (!rt) return;
       disposeVisual(rt);
+      disposeOrbitPathLine(id);
       objectRuntime.delete(id);
       customModelCache.delete(id);
     }
@@ -1393,6 +1552,10 @@
         }
         rt.root.position.set(rt.absX, rt.absY, rt.absZ);
         if (rt.gState && parentRt) rt.root.lookAt(parentRt.absX, parentRt.absY, parentRt.absZ);
+        // The path line's shape is fixed (see rebuildOrbitPathLine), but
+        // its parent may itself be moving — keep it centered live.
+        const pathLine = orbitPathLines.get(obj.id);
+        if (pathLine && parentRt) pathLine.position.set(parentRt.absX, parentRt.absY, parentRt.absZ);
       });
     }
 
@@ -2032,7 +2195,14 @@
       }});
 
       createSliderPanel(objectsTab, { code: 'OBJ-04', title: 'Mass', unit: '', min: meta.massRange[0], max: meta.massRange[1], step: (meta.massRange[1] - meta.massRange[0]) / 300, value: obj.mass, format: v => v.toFixed(2), onInput: v => {
-        obj.mass = v; // live: children pick up the new pull next physics tick, no reseed needed
+        // Live: children pick up the new pull next physics tick, no reseed
+        // needed — and no visible child path needs redrawing either. Orbit
+        // shape here is seeded as speedRatio × *local* circular velocity,
+        // and that ratio cancels mu out of both the semi-major axis and
+        // eccentricity formulas entirely (a = r0/(2 − speedRatio²), no mu
+        // term) — a heavier parent makes the same-shaped orbit traverse
+        // faster, never a differently-shaped one.
+        obj.mass = v;
       }});
 
       createSliderPanel(objectsTab, { code: 'OBJ-05', title: 'Size', unit: 'u', min: meta.sizeRange[0], max: meta.sizeRange[1], step: (meta.sizeRange[1] - meta.sizeRange[0]) / 150, value: obj.size, format: v => v.toFixed(2), onInput: v => {
@@ -2069,10 +2239,18 @@
           obj.orbit.angleDeg = v;
           reseedObjectOrbit(obj);
         }});
+        createColorPanel(objectsTab, { code: 'OBJ-12', title: 'Path Color', value: obj.pathColor || obj.color, sub: true, onChange: c => {
+          obj.pathColor = c;
+          if (obj.pathVisible) rebuildOrbitPathLine(obj);
+        }});
+        createTogglePanel(objectsTab, { code: 'OBJ-13', title: 'Light Orbit Path', value: !!obj.pathVisible, onLabel: 'LIT', offLabel: 'DARK', onChange: v => {
+          obj.pathVisible = v;
+          rebuildOrbitPathLine(obj); // handles both showing and (via the !pathVisible no-op + dispose above) hiding
+        }});
       }
 
       const deleteWrap = el('div', 'lcars-panel');
-      const { headerEl } = panelHeader('OBJ-12', 'Remove');
+      const { headerEl } = panelHeader('OBJ-14', 'Remove');
       deleteWrap.appendChild(headerEl);
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
@@ -2112,6 +2290,44 @@
     createSliderPanel(cameraTab, { code: 'CAM-04', title: 'Follow Height', unit: 'u', min: 0.5, max: 30, step: 0.5, value: params.camera.height, format: v => v.toFixed(1), onInput: v => {
       params.camera.height = v;
     }});
+    createSelectPanel(cameraTab, {
+      code: 'CAM-05',
+      title: 'Lighting Mode',
+      options: ['Shaded', 'Posterized', 'Flat Light'],
+      value: params.lightingMode,
+      onChange: v => {
+        params.lightingMode = v;
+        applyLightingModeToAllObjects();
+      }
+    });
+    // "Master" controls: apply to every object's orbit-path at once,
+    // instead of visiting each one individually on the Objects tab. Not a
+    // persistent override layer — after applying, each object's own Path
+    // Color/Light Orbit Path controls remain the live source of truth and
+    // can still be adjusted individually.
+    createColorPanel(cameraTab, { code: 'CAM-06', title: 'Set All Path Colors', value: '#33ffff', onChange: c => {
+      params.objects.forEach(o => {
+        if (!o.parentId) return;
+        o.pathColor = c;
+        if (o.pathVisible) rebuildOrbitPathLine(o);
+      });
+      renderObjectsTab(); // refresh the focused object's own Path Color panel if it changed
+    }});
+    createTogglePanel(cameraTab, {
+      code: 'CAM-07',
+      title: 'Light All Orbit Paths',
+      value: params.objects.length > 0 && params.objects.filter(o => o.parentId).every(o => o.pathVisible),
+      onLabel: 'ALL LIT',
+      offLabel: 'ALL DARK',
+      onChange: v => {
+        params.objects.forEach(o => {
+          if (!o.parentId) return;
+          o.pathVisible = v;
+          rebuildOrbitPathLine(o);
+        });
+        renderObjectsTab(); // refresh the focused object's own Light Orbit Path toggle
+      }
+    });
 
     // 3. Memory — "Computer, save current program." Local named saves, plus
     // a portable export/import code for taking a program to another browser.
