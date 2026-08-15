@@ -662,6 +662,41 @@
       border-color: transparent;
     }
 
+    /* Orbital Telemetry (Objects tab) — a compact live-value grid instead
+       of one full-height panel per number, so four readouts cost roughly
+       what one slider does. */
+    .tool-telemetry-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 12px;
+      margin-top: 4px;
+    }
+
+    .tool-telemetry-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 6px;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .tool-telemetry-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: rgba(255, 255, 255, 0.5);
+      text-transform: uppercase;
+    }
+
+    .tool-telemetry-value {
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
     /* One consistent themed focus ring for every keyboard-reachable control,
        instead of leaving it to inconsistent browser defaults — and restoring
        it where .tool-slider/.tool-toggle removed the native outline entirely. */
@@ -1278,6 +1313,35 @@
       return openConicPoints(e, a * (1 - e * e), periapsisAngle, SEGMENTS);
     }
 
+    // Same seed-condition derivation as computeOrbitShapePoints, but
+    // returning the numbers themselves (semi-major axis, eccentricity,
+    // period) instead of a line's worth of points — feeds the Orbital
+    // Telemetry readout. period is null for an unbound (parabolic/
+    // hyperbolic) trajectory, which has no period.
+    function computeOrbitElements(mu, distance, angleDeg, speedRatio) {
+      const r0 = distance;
+      const v0 = speedRatio * Math.sqrt(mu / r0);
+      const energy = 0.5 * v0 * v0 - mu / r0;
+      if (Math.abs(energy) < 1e-6) return { a: Infinity, e: 1, period: null };
+      const a = -mu / (2 * energy);
+      const e = Math.abs(1 - r0 / a);
+      const period = a > 0 ? 2 * Math.PI * Math.sqrt(Math.pow(a, 3) / mu) : null;
+      return { a, e, period };
+    }
+
+    // The smallest Orbit Distance that keeps a child clear of its parent's
+    // own rendered body — both radii approximated as half their Size
+    // (a fair clearance estimate for every built-in shape, Starship/Custom
+    // included, without needing each one's exact silhouette). Recomputed
+    // wherever the Objects tab panel is rebuilt, so it responds to Size
+    // changes at the next natural render rather than needing its own
+    // live-drag wiring.
+    function minOrbitDistanceFor(obj, parentObj) {
+      const parentRadius = 0.5 * ((parentObj && parentObj.size) || 1);
+      const ownRadius = 0.5 * (obj.size || 1);
+      return Math.max(2, parentRadius + ownRadius + 1);
+    }
+
     const orbitPathLines = new Map(); // object id -> THREE.Line
 
     function disposeOrbitPathLine(id) {
@@ -1707,7 +1771,34 @@
         if (stardateEl) stardateEl.textContent = computeStardate();
         const i = Math.floor(Math.random() * spineTicks.length);
         if (spineTicks[i]) spineTicks[i].textContent = randomTick();
+        updateOrbitalTelemetryReadout();
       }, 1000);
+    }
+
+    // Keeps the focused object's Orbital Telemetry panel (if it's actually
+    // on screen right now) reading live current values — piggybacked on
+    // this existing 1s ticker instead of a dedicated timer or a per-frame
+    // DOM write. A no-op whenever there's nothing relevant to update, so
+    // it's always safe to call unconditionally.
+    function updateOrbitalTelemetryReadout() {
+      if (activeTabId !== 'objects') return;
+      const obj = params.objects.find(o => o.id === focusedObjectId);
+      if (!obj || !obj.parentId) return;
+      const rt = objectRuntime.get(obj.id);
+      const parentRt = objectRuntime.get(obj.parentId);
+      if (!rt || !parentRt) return;
+      const mu = Math.max(0.5, parentRt.config.mass);
+      const elements = computeOrbitElements(mu, obj.orbit.distance, obj.orbit.angleDeg, obj.orbit.speedRatio);
+      const dist = rt.gState ? Math.hypot(rt.gState.x, rt.gState.z) : obj.orbit.distance;
+      const speed = rt.gState ? Math.hypot(rt.gState.vx, rt.gState.vz) : 0;
+      const setField = (key, text) => {
+        const fieldEl = document.querySelector('[data-telemetry="' + key + '"]');
+        if (fieldEl) fieldEl.textContent = text;
+      };
+      setField('period', elements.period !== null ? elements.period.toFixed(1) + ' s' : 'UNBOUND');
+      setField('speed', speed.toFixed(2) + ' u/s');
+      setField('distance', dist.toFixed(1) + ' u');
+      setField('eccentricity', elements.e.toFixed(3));
     }
 
     function stopTelemetry() {
@@ -2249,7 +2340,17 @@
       }});
 
       if (obj.parentId) {
-        createSliderPanel(objectsTab, { code: 'OBJ-09', title: 'Orbit Distance', unit: 'u', min: 2, max: 200, step: 0.5, value: obj.orbit.distance, format: v => v.toFixed(1), sub: true, onInput: v => {
+        const parentObj = byId.get(obj.parentId);
+        const minDist = minOrbitDistanceFor(obj, parentObj);
+        // Self-heal an already-invalid stored distance (an old save, or a
+        // parent/self Size change since this was last set) instead of just
+        // raising the slider's floor out from under a value that's still
+        // sitting below it.
+        if (obj.orbit.distance < minDist) {
+          obj.orbit.distance = minDist;
+          reseedObjectOrbit(obj);
+        }
+        createSliderPanel(objectsTab, { code: 'OBJ-09', title: 'Orbit Distance', unit: 'u', min: minDist, max: 200, step: 0.5, value: obj.orbit.distance, format: v => v.toFixed(1), sub: true, onInput: v => {
           obj.orbit.distance = v;
           reseedObjectOrbit(obj);
         }});
@@ -2269,10 +2370,41 @@
           obj.pathVisible = v;
           rebuildOrbitPathLine(obj); // handles both showing and (via the !pathVisible no-op + dispose above) hiding
         }});
+
+        // Orbital Telemetry — Dr. Tyson's ask: real numbers, not just a
+        // moving shape. Seeded here with the current values, then kept
+        // live by the existing once-a-second telemetry ticker (see
+        // updateOrbitalTelemetryReadout) rather than a new timer.
+        const parentRtForTel = objectRuntime.get(obj.parentId);
+        const muForTel = parentRtForTel ? Math.max(0.5, parentRtForTel.config.mass) : 0.5;
+        const telElements = computeOrbitElements(muForTel, obj.orbit.distance, obj.orbit.angleDeg, obj.orbit.speedRatio);
+        const telRt = objectRuntime.get(obj.id);
+        const liveDist = telRt && telRt.gState ? Math.hypot(telRt.gState.x, telRt.gState.z) : obj.orbit.distance;
+        const liveSpeed = telRt && telRt.gState ? Math.hypot(telRt.gState.vx, telRt.gState.vz) : 0;
+
+        const telPanel = el('div', 'lcars-panel lcars-panel--sub');
+        const { headerEl: telHeader } = panelHeader('OBJ-14', 'Orbital Telemetry');
+        telPanel.appendChild(telHeader);
+        const telGrid = el('div', 'tool-telemetry-grid');
+        [
+          ['period', 'PERIOD', telElements.period !== null ? telElements.period.toFixed(1) + ' s' : 'UNBOUND'],
+          ['speed', 'SPEED', liveSpeed.toFixed(2) + ' u/s'],
+          ['distance', 'DISTANCE', liveDist.toFixed(1) + ' u'],
+          ['eccentricity', 'ECCENTRICITY', telElements.e.toFixed(3)]
+        ].forEach(([key, label, text]) => {
+          const row = el('div', 'tool-telemetry-row');
+          row.appendChild(el('span', 'tool-telemetry-label', label));
+          const val = el('span', 'tool-telemetry-value', text);
+          val.dataset.telemetry = key;
+          row.appendChild(val);
+          telGrid.appendChild(row);
+        });
+        telPanel.appendChild(telGrid);
+        objectsTab.appendChild(telPanel);
       }
 
       const deleteWrap = el('div', 'lcars-panel');
-      const { headerEl } = panelHeader('OBJ-14', 'Remove');
+      const { headerEl } = panelHeader('OBJ-15', 'Remove');
       deleteWrap.appendChild(headerEl);
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
