@@ -531,6 +531,79 @@
       text-transform: uppercase;
     }
 
+    .tool-hint {
+      margin: -4px 0 2px;
+      padding: 0 4px;
+      font-size: 9px;
+      line-height: 1.4;
+      letter-spacing: 0.3px;
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    /* The Navigation radial picker (Ship destination / Satellite Point At
+       Target) — a real trigonometric circle of buttons around a center
+       hub, positioned in JS (see createRadialPicker), not a styled list. */
+    .nav-radial {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      margin: 10px auto 4px;
+    }
+
+    .nav-radial__hub {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background: var(--accent, #ff9c00);
+      color: #000;
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 4px;
+      line-height: 1.15;
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+    }
+
+    .nav-radial__opt {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.06);
+      color: #ccc;
+      font-family: inherit;
+      font-size: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+      cursor: pointer;
+      padding: 2px;
+      line-height: 1.05;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .nav-radial__opt:hover { filter: brightness(1.25); }
+
+    .nav-radial__opt.is-active {
+      background: var(--accent, #ff9c00);
+      color: #000;
+      border-color: #000;
+      font-weight: 800;
+    }
+
     /* Object chips (Objects tab): one per stellar body, colored by its own
        type accent, plus a "+" chip to add a new one. */
     .tool-object-row {
@@ -618,6 +691,7 @@
     .tool-program-delete:focus-visible,
     .tool-textarea:focus-visible,
     .tool-object-chip:focus-visible,
+    .nav-radial__opt:focus-visible,
     .lcars-hud__selection-clear:focus-visible,
     .lcars-hud__audio-toggle:focus-visible {
       outline: 2px solid var(--lcars-alert);
@@ -661,10 +735,17 @@
       lightingMode: 'Flat Light',
       // Every stellar object: { id, name, type, parentId, mass, size,
       // shape, color, orbit: { distance, speedRatio, angleDeg },
-      // pathColor, pathVisible }. parentId: null means "fixed at the
-      // universal center" — normally true of exactly one root object
-      // (e.g. the Sun). Populated with a default Terran solar system
-      // below, after OBJECT_TYPES is defined.
+      // pathColor, pathVisible, isStation }. parentId: null means "fixed
+      // at the universal center" — normally true of exactly one root
+      // object (e.g. the Sun). isStation flags a SATELLITE as a named
+      // Federation landmark (spacedock/drydock) — priority-listed in the
+      // Navigation destination picker, purely a curation hint. A SHIP or
+      // SATELLITE also carries Navigation state — see "Ships & Satellites:
+      // Navigation" further down — { rotationMode, spinRate,
+      // pointTargetId } for satellites, all optional with sensible
+      // fallbacks (same pattern as pathColor/pathVisible above) so older
+      // saved programs load without migration. Populated with a default
+      // Terran solar system below, after OBJECT_TYPES is defined.
       objects: []
     };
 
@@ -1219,6 +1300,34 @@
       return Math.max(2, parentRadius + ownRadius + 1);
     }
 
+    // The "Standard Orbit" default distance a Ship settles into on arrival
+    // — comfortably outside minOrbitDistanceFor's collision floor, but
+    // closer for a station/drydock (a ship parks near a station, not out
+    // at a planet's own orbital shell).
+    function standardArrivalDistanceFor(obj, destObj) {
+      const minDist = minOrbitDistanceFor(obj, destObj);
+      return destObj.isStation ? minDist * 1.3 : minDist * 2.5;
+    }
+
+    // The Navigation radial's curated "everyone knows where these are"
+    // shortlist — stations first (the whole point of this feature), then
+    // the Sun, then planets, then whatever's left — capped at 7 so an 8th
+    // "Custom" slot (added by the caller, not here) still fits the wheel
+    // without crowding. Reused for both a Ship's flight destination and a
+    // Satellite's Point At Target list; excludes the object itself and
+    // anything that's its own descendant (same cycle guard as the Parent
+    // selector, since a Ship "arriving" at its own child makes no sense).
+    function curatedQuickDestinations(obj) {
+      const byId = new Map(params.objects.map(o => [o.id, o]));
+      const eligible = params.objects.filter(o => o.id !== obj.id && !isDescendantOf(o.id, obj.id, byId));
+      const stations = eligible.filter(o => o.isStation);
+      const suns = eligible.filter(o => o.type === 'SUN' && !o.isStation);
+      const planets = eligible.filter(o => o.type === 'PLANET' && !o.isStation);
+      const named = new Set(stations.concat(suns, planets));
+      const rest = eligible.filter(o => !named.has(o));
+      return stations.concat(suns, planets, rest).slice(0, 7);
+    }
+
     const orbitPathLines = new Map(); // object id -> THREE.Line
 
     function disposeOrbitPathLine(id) {
@@ -1304,6 +1413,104 @@
       reseedObjectOrbit(obj);
     }
 
+    // --- Ships & Satellites: Navigation ---
+    // Unlike every other object here (which only ever launches once, at
+    // creation or a manual Distance/Speed/Angle edit — see
+    // reseedObjectOrbit), a Ship or a stationed Satellite can be given a
+    // new course mid-simulation: fly out from wherever it currently is,
+    // under its own power (not a gravity-integrated trajectory — this is
+    // "engines on," not ballistic), and settle into an orbit around a
+    // chosen destination. rt.transit (runtime-only, like gState) is the
+    // presence of an active course; its absence means "flying the normal
+    // orbit its params.objects entry already describes."
+    //
+    // The eased straight-line flight below is a deliberate simplification,
+    // not an oversight: this sim's whole physics model is patched 2-body
+    // (each object only ever feels its immediate parent's pull, see the
+    // Shared Gravity Law section), which has no notion of a transfer orbit
+    // between two different parents in the first place. Chasing the
+    // destination's own live position every frame (rather than a fixed
+    // point computed once at departure) means a ship "leads" a moving
+    // target the way a helmsman plotting an intercept course would,
+    // without needing real n-body integration to do it.
+    function beginTransit(obj, dest) {
+      const rt = objectRuntime.get(obj.id);
+      if (!rt) return;
+      disposeOrbitPathLine(obj.id); // stale while the destination parent hasn't been set yet
+      const destParentRt = objectRuntime.get(dest.parentId);
+      const angleRad = dest.angleDeg * Math.PI / 180;
+      const targetX = (destParentRt ? destParentRt.absX : 0) + Math.cos(angleRad) * dest.distance;
+      const targetZ = (destParentRt ? destParentRt.absZ : 0) + Math.sin(angleRad) * dest.distance;
+      const travelDist = Math.hypot(targetX - rt.absX, targetZ - rt.absZ);
+      const cruiseSpeed = Math.max(1, dest.cruiseSpeed || 10);
+      rt.transit = {
+        destParentId: dest.parentId,
+        destDistance: dest.distance,
+        destAngleDeg: dest.angleDeg,
+        destSpeedRatio: dest.speedRatio,
+        startAbsX: rt.absX,
+        startAbsZ: rt.absZ,
+        elapsed: 0,
+        duration: Math.min(180, Math.max(1.5, travelDist / cruiseSpeed))
+      };
+      playOpen();
+    }
+
+    // Advances one object's in-progress transit by `delta`, writing its
+    // new absolute position directly (bypassing the gravity/parent branch
+    // in updateObjectsPhysics entirely) — called from there, not directly.
+    function updateShipTransit(obj, rt, delta) {
+      const tr = rt.transit;
+      tr.elapsed += delta;
+      const t = Math.min(1, tr.duration > 0 ? tr.elapsed / tr.duration : 1);
+      const ease = t * t * (3 - 2 * t); // smoothstep — gentle accelerate/decelerate, not a jarring linear snap
+      const destParentRt = tr.destParentId ? objectRuntime.get(tr.destParentId) : null;
+      const angleRad = tr.destAngleDeg * Math.PI / 180;
+      const targetX = (destParentRt ? destParentRt.absX : 0) + Math.cos(angleRad) * tr.destDistance;
+      const targetZ = (destParentRt ? destParentRt.absZ : 0) + Math.sin(angleRad) * tr.destDistance;
+      rt.absX = tr.startAbsX + (targetX - tr.startAbsX) * ease;
+      rt.absY = 0;
+      rt.absZ = tr.startAbsZ + (targetZ - tr.startAbsZ) * ease;
+      if (t >= 1) completeTransit(obj, rt);
+    }
+
+    // Arrival: hands the object off to the normal orbit machinery exactly
+    // where the transit's easing already left it (the destination's own
+    // angleDeg/distance offset), so there's no snap — reseedObjectOrbit
+    // just needs to launch a fresh gState from that same point.
+    function completeTransit(obj, rt) {
+      const tr = rt.transit;
+      rt.transit = null;
+      obj.parentId = tr.destParentId;
+      obj.orbit.distance = tr.destDistance;
+      obj.orbit.angleDeg = tr.destAngleDeg;
+      obj.orbit.speedRatio = tr.destSpeedRatio;
+      rebuildHierarchyOrder();
+      reseedObjectOrbit(obj);
+      playConfirm();
+      if (focusedObjectId === obj.id) renderObjectsTab();
+    }
+
+    // Graceful cancel: rather than snapping back to a now-stale pre-flight
+    // gState, converts wherever the ship *currently* is into a fresh
+    // circular holding orbit around its still-unchanged parent — a
+    // "hold position" maneuver, not an undo.
+    function abortTransit(obj, rt) {
+      if (!rt.transit) return;
+      rt.transit = null;
+      const parentObj = obj.parentId ? params.objects.find(o => o.id === obj.parentId) : null;
+      const parentRt = obj.parentId ? objectRuntime.get(obj.parentId) : null;
+      if (parentRt) {
+        const dx = rt.absX - parentRt.absX, dz = rt.absZ - parentRt.absZ;
+        obj.orbit.distance = Math.max(minOrbitDistanceFor(obj, parentObj), Math.hypot(dx, dz));
+        obj.orbit.angleDeg = (Math.atan2(dz, dx) * 180 / Math.PI + 360) % 360;
+        obj.orbit.speedRatio = 1.0;
+      }
+      reseedObjectOrbit(obj);
+      renderObjectsTab();
+      playDismiss();
+    }
+
     function destroyObjectRuntime(id) {
       const rt = objectRuntime.get(id);
       if (!rt) return;
@@ -1355,6 +1562,21 @@
 
     let focusedObjectId = null;   // which object's detail panel the Objects tab shows
     let selectedObjectId = null;  // which object is picked in the 3D scene (see Entity Selection)
+
+    // In-progress Navigation picks (Destination, Approach Speed, Arrival
+    // Orbit mode, Custom Coordinates) for whichever Ship/Satellite is
+    // focused — deliberately NOT part of params.objects: this is "what's
+    // dialed into the console right now," not simulation state, so it
+    // never gets saved/exported and resets to sensible defaults each time
+    // a fresh object is focused. Keyed by object id so switching focus
+    // back and forth doesn't lose an in-progress course.
+    const navPickerState = new Map();
+    function getNavState(id) {
+      if (!navPickerState.has(id)) {
+        navPickerState.set(id, { destinationId: null, speed: 10, arrivalMode: 'Standard', customParentId: null, customDistance: 10, customAngle: 0, customSpeedRatio: 1.0 });
+      }
+      return navPickerState.get(id);
+    }
 
     // "Click + to add stellar object" — defaults its parent to whatever's
     // currently most massive (the closest thing to "its logical hierarchy
@@ -1431,7 +1653,12 @@
     // standing correct while fitting the whole system into a few minutes
     // of watchable motion. Earth's Moon, an Artificial Satellite, and the
     // Enterprise all orbit Earth at hand-picked (not astronomically real)
-    // distances, spaced apart so they don't collide.
+    // distances, spaced apart so they don't collide. Earth Spacedock and
+    // Utopia Planitia (Mars) are Federation landmarks — isStation flags
+    // them as priority picks in the Navigation destination radial (see
+    // "Ships & Satellites: Navigation"); Spacedock also demonstrates a
+    // Satellite's Point At Target rotation mode by facing Sol rather than
+    // the default of just facing its own parent.
     function buildDefaultSolarSystem() {
       const bodies = [
         { name: 'Sol', type: 'SUN', mass: 3000, size: 9, parent: null, distance: 0, angle: 0 },
@@ -1440,8 +1667,10 @@
         { name: 'Earth', type: 'PLANET', mass: 43, size: 1.0, parent: 'Sol', distance: 25, angle: 80 },
         { name: 'Moon', type: 'MOON', mass: 10, size: 0.3, parent: 'Earth', distance: 6, angle: 0 },
         { name: 'Comm Satellite', type: 'SATELLITE', mass: 2, size: 0.3, shape: 'Prism', parent: 'Earth', distance: 4, angle: 120 },
+        { name: 'Earth Spacedock', type: 'SATELLITE', mass: 2, size: 0.35, shape: 'Prism', parent: 'Earth', distance: 5.2, angle: 300, isStation: true, rotationMode: 'PointTarget', pointTarget: 'Sol' },
         { name: 'Enterprise', type: 'SHIP', mass: 3, size: 0.9, shape: 'Starship', color: '#e8e8e8', parent: 'Earth', distance: 8, angle: 240 },
         { name: 'Mars', type: 'PLANET', mass: 21, size: 0.55, parent: 'Sol', distance: 30.9, angle: 120 },
+        { name: 'Utopia Planitia', type: 'SATELLITE', mass: 2, size: 0.35, shape: 'Prism', parent: 'Mars', distance: 3, angle: 0, isStation: true },
         { name: 'Ceres', type: 'ASTEROID', mass: 5, size: 0.25, shape: 'Prism', parent: 'Sol', distance: 41.1, angle: 160 },
         { name: 'Jupiter', type: 'PLANET', mass: 296, size: 3.2, parent: 'Sol', distance: 57, angle: 200 },
         { name: 'Saturn', type: 'PLANET', mass: 197, size: 2.8, parent: 'Sol', distance: 77.4, angle: 240 },
@@ -1464,6 +1693,9 @@
           color: b.color || meta.color,
           orbit: { distance: b.distance, speedRatio: 1.0, angleDeg: b.angle }
         };
+        if (b.isStation) obj.isStation = true;
+        if (b.rotationMode) obj.rotationMode = b.rotationMode;
+        if (b.pointTarget) obj.pointTargetId = idByName[b.pointTarget];
         params.objects.push(obj);
         createObjectRuntime(obj);
       });
@@ -1490,8 +1722,11 @@
       hierarchyOrderCache.forEach(obj => {
         const rt = objectRuntime.get(obj.id);
         if (!rt) return;
+        const prevAbsX = rt.absX, prevAbsZ = rt.absZ; // last frame's position, if any
         const parentRt = obj.parentId ? objectRuntime.get(obj.parentId) : null;
-        if (!parentRt) {
+        if (rt.transit) {
+          updateShipTransit(obj, rt, delta);
+        } else if (!parentRt) {
           rt.absX = 0; rt.absY = 0; rt.absZ = 0;
         } else {
           if (rt.gState) integrateGravity(rt.gState, delta, Math.max(0.5, parentRt.config.mass));
@@ -1500,7 +1735,44 @@
           rt.absZ = parentRt.absZ + (rt.gState ? rt.gState.z : 0);
         }
         rt.root.position.set(rt.absX, rt.absY, rt.absZ);
-        if (rt.gState && parentRt) rt.root.lookAt(parentRt.absX, parentRt.absY, parentRt.absZ);
+
+        // Live world-space movement direction/speed, from this frame's
+        // actual displacement — valid uniformly whether that motion is
+        // orbital or an active transit, unlike gState.vx/vz (which only
+        // exists mid-orbit and goes stale during a transit). Drives Ship
+        // nose orientation below and the Follow Selected camera's trail.
+        if (prevAbsX !== undefined && delta > 0) {
+          const dx = rt.absX - prevAbsX, dz = rt.absZ - prevAbsZ;
+          const mlen = Math.hypot(dx, dz);
+          if (mlen > 1e-6) { rt.moveDirX = dx / mlen; rt.moveDirZ = dz / mlen; rt.moveSpeed = mlen / delta; }
+          else { rt.moveSpeed = 0; }
+        } else {
+          rt.moveDirX = 0; rt.moveDirZ = 0; rt.moveSpeed = 0;
+        }
+
+        // --- Orientation --- A Ship always noses toward its actual
+        // direction of travel (see moveDir above) — orbiting or in
+        // transit, the mechanism is identical either way, which is the
+        // whole point of computing it that way. A Satellite instead
+        // holds whichever attitude its Rotation Mode says (spins in
+        // place for artificial gravity, or keeps a fixed target in view
+        // for signal pointing) — travel direction is irrelevant to it.
+        // Everything else keeps the original tidal-lock-toward-parent
+        // default.
+        if (obj.type === 'SHIP') {
+          if (rt.moveSpeed > 1e-4) rt.root.rotation.y = Math.atan2(rt.moveDirX, rt.moveDirZ);
+        } else if (obj.type === 'SATELLITE') {
+          if ((obj.rotationMode || 'Spin') === 'PointTarget') {
+            const targetRt = objectRuntime.get(obj.pointTargetId) || parentRt;
+            if (targetRt) rt.root.lookAt(targetRt.absX, targetRt.absY, targetRt.absZ);
+          } else {
+            rt.spinAngle = (rt.spinAngle || 0) + (obj.spinRate || 40) * Math.PI / 180 * delta;
+            rt.root.rotation.y = rt.spinAngle;
+          }
+        } else if (rt.gState && parentRt) {
+          rt.root.lookAt(parentRt.absX, parentRt.absY, parentRt.absZ);
+        }
+
         // The path line's shape is fixed (see rebuildOrbitPathLine), but
         // its parent may itself be moving — keep it centered live.
         const pathLine = orbitPathLines.get(obj.id);
@@ -1674,10 +1946,25 @@
       setField('eccentricity', elements.e.toFixed(3));
     }
 
+    // Same piggyback as the telemetry readout above: keeps a Ship's ETA
+    // line current without its own timer. The Navigation panel only ever
+    // renders one ship's status at a time (whichever object is focused),
+    // so there's at most one element to find.
+    function updateNavStatusReadout() {
+      if (!objectsPanel || !objectsPanel.isOpen()) return;
+      const statusEl = document.querySelector('[data-nav-status]');
+      if (!statusEl) return;
+      const rt = objectRuntime.get(statusEl.dataset.navStatus);
+      if (!rt || !rt.transit) return;
+      const remaining = Math.max(0, rt.transit.duration - rt.transit.elapsed);
+      statusEl.textContent = 'ETA ' + remaining.toFixed(1) + 's';
+    }
+
     stardateEl.textContent = computeStardate();
     setInterval(() => {
       stardateEl.textContent = computeStardate();
       updateOrbitalTelemetryReadout();
+      updateNavStatusReadout();
     }, 1000);
 
     // --- Double-tap/double-click to select an object in the 3D scene ---
@@ -1797,6 +2084,7 @@
       const valueText = v => String(format(v)) + (opts.unit ? ' ' + opts.unit : '');
       const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
       if (opts.visible === false) panel.style.display = 'none';
+      if (opts.accent) panel.style.setProperty('--accent', opts.accent);
       const { headerEl, titleId } = panelHeader(opts.code, opts.title);
       panel.appendChild(headerEl);
 
@@ -1835,7 +2123,8 @@
     function createTogglePanel(container, opts) {
       const onLabel = opts.onLabel || 'ENABLED';
       const offLabel = opts.offLabel || 'DISABLED';
-      const panel = el('div', 'lcars-panel');
+      const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
+      if (opts.accent) panel.style.setProperty('--accent', opts.accent);
       const { headerEl, titleId } = panelHeader(opts.code, opts.title);
       panel.appendChild(headerEl);
 
@@ -1866,7 +2155,8 @@
 
     function createSelectPanel(container, opts) {
       const labels = opts.labels || {};
-      const panel = el('div', 'lcars-panel');
+      const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
+      if (opts.accent) panel.style.setProperty('--accent', opts.accent);
       const { headerEl, titleId } = panelHeader(opts.code, opts.title);
       panel.appendChild(headerEl);
 
@@ -1996,6 +2286,58 @@
       input.addEventListener('change', commit);
       input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
       panel.appendChild(input);
+
+      container.appendChild(panel);
+    }
+
+    // Shortens a display name to something that still reads at ~8px inside
+    // a 50px circle — first word only, past a length where the full name
+    // would just wrap into mush. The full name is always shown elsewhere
+    // (the hub, and the inset override dropdown), so this is purely a
+    // radial-button-label concern.
+    function radialLabel(name) {
+      return name.length > 10 ? name.split(' ')[0].slice(0, 9) : name;
+    }
+
+    // The circular "quick picks" menu Mike Okuda proposed: a center hub
+    // (showing the current pick) ringed by up to 8 buttons laid out with
+    // real trigonometry, not a styled list. Used for both a Ship's flight
+    // destination and a Satellite's Point At Target — same widget, same
+    // curated item list, different meaning to the caller. Always a full
+    // teardown/rebuild on pick (via the caller's onPick, which re-renders
+    // the Objects tab) rather than an in-place refresh, matching how every
+    // other structural change in this panel already works.
+    function createRadialPicker(container, opts) {
+      // opts: { code, title, accent, items: [{id,label}], selectedId, onPick(id) }
+      const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
+      if (opts.accent) panel.style.setProperty('--accent', opts.accent);
+      const { headerEl } = panelHeader(opts.code, opts.title);
+      panel.appendChild(headerEl);
+
+      const selected = opts.items.find(it => it.id === opts.selectedId);
+      const valueEl = el('div', 'tool-value tool-value--text', selected ? selected.label : 'NONE SELECTED');
+      panel.appendChild(valueEl);
+
+      const wheel = el('div', 'nav-radial');
+      const hub = el('div', 'nav-radial__hub', selected ? radialLabel(selected.label) : '—');
+      wheel.appendChild(hub);
+
+      const n = opts.items.length;
+      const radius = 84;
+      opts.items.forEach((item, i) => {
+        const angle = (-90 + (360 / Math.max(n, 1)) * i) * Math.PI / 180;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'nav-radial__opt' + (item.id === opts.selectedId ? ' is-active' : '');
+        btn.style.left = (110 + Math.cos(angle) * radius) + 'px';
+        btn.style.top = (110 + Math.sin(angle) * radius) + 'px';
+        btn.textContent = radialLabel(item.label);
+        btn.title = item.label;
+        btn.setAttribute('aria-pressed', item.id === opts.selectedId ? 'true' : 'false');
+        btn.addEventListener('click', () => { playTick(); opts.onPick(item.id); });
+        wheel.appendChild(btn);
+      });
+      panel.appendChild(wheel);
 
       container.appendChild(panel);
     }
@@ -2186,6 +2528,212 @@
         const rt = objectRuntime.get(obj.id);
         if (rt) rt.allMeshes.forEach(m => { if (m.material && m.material.color) m.material.color.set(c); });
       }});
+
+      // --- Ships & Satellites: Navigation --- The contextual capability:
+      // selecting a Ship or Satellite surfaces this section, set apart
+      // (alert-cyan accent) from the rest of the object's controls since
+      // it governs behavior no other object type has. A Satellite's own
+      // attitude (Spin for artificial gravity, or Point At Target for
+      // signal pointing) lives here too, since it's a navigation concern
+      // rather than an appearance one.
+      if (obj.type === 'SHIP' || obj.type === 'SATELLITE') {
+        const navRt = objectRuntime.get(obj.id);
+        const inTransit = !!(navRt && navRt.transit);
+        const NAV_ACCENT = LCARS_PALETTE.alert;
+        let navCode = 1;
+        const nextNavCode = () => 'NAV-' + String(navCode++).padStart(2, '0');
+        const NONE_LABEL = { '': 'NONE SELECTED' };
+
+        const navTitlePanel = el('div', 'lcars-panel');
+        navTitlePanel.style.setProperty('--accent', NAV_ACCENT);
+        const { headerEl: navTitleHeader } = panelHeader('NAV', 'Navigation');
+        navTitlePanel.appendChild(navTitleHeader);
+        objectsTab.appendChild(navTitlePanel);
+
+        if (obj.type === 'SATELLITE') {
+          createSelectPanel(objectsTab, {
+            code: nextNavCode(), title: 'Rotation Mode', accent: NAV_ACCENT,
+            options: ['Spin', 'PointTarget'],
+            labels: { Spin: 'Spin (Artificial Gravity)', PointTarget: 'Point At Target' },
+            value: obj.rotationMode || 'Spin',
+            onChange: v => { obj.rotationMode = v; renderObjectsTab(); }
+          });
+          if ((obj.rotationMode || 'Spin') === 'Spin') {
+            createSliderPanel(objectsTab, {
+              code: nextNavCode(), title: 'Spin Rate', unit: '°/s', accent: NAV_ACCENT, sub: true,
+              min: 5, max: 360, step: 5, value: obj.spinRate || 40, format: v => Math.round(v),
+              onInput: v => { obj.spinRate = v; }
+            });
+          } else {
+            const targetItems = curatedQuickDestinations(obj).map(o => ({ id: o.id, label: objectDisplayName(o) }));
+            createRadialPicker(objectsTab, {
+              code: nextNavCode(), title: 'Point Target', accent: NAV_ACCENT, sub: true,
+              items: targetItems, selectedId: obj.pointTargetId || obj.parentId,
+              onPick: id => { obj.pointTargetId = id; renderObjectsTab(); }
+            });
+            // Inset override — same "circular menu for defaults, inset
+            // menu to override" split the Ship Destination picker below
+            // uses, for reaching anything not in the curated wheel.
+            const allOthers = params.objects.filter(o => o.id !== obj.id);
+            createSelectPanel(objectsTab, {
+              code: nextNavCode(), title: 'Full Target List', accent: NAV_ACCENT, sub: true,
+              options: allOthers.map(o => o.id),
+              labels: Object.assign({}, NONE_LABEL, Object.fromEntries(allOthers.map(o => [o.id, objectDisplayName(o)]))),
+              value: obj.pointTargetId || obj.parentId || '',
+              onChange: v => { obj.pointTargetId = v; renderObjectsTab(); }
+            });
+          }
+        }
+
+        if (obj.type === 'SHIP' && inTransit) {
+          const tr = navRt.transit;
+          const destObj = byId.get(tr.destParentId);
+          const panel = el('div', 'lcars-panel');
+          panel.style.setProperty('--accent', NAV_ACCENT);
+          const { headerEl } = panelHeader(nextNavCode(), 'Navigation');
+          panel.appendChild(headerEl);
+          panel.appendChild(el('div', 'tool-value tool-value--text', 'EN ROUTE: ' + (destObj ? objectDisplayName(destObj) : 'UNKNOWN')));
+          const remaining = Math.max(0, tr.duration - tr.elapsed);
+          const statusEl = el('div', 'tool-hint', 'ETA ' + remaining.toFixed(1) + 's');
+          statusEl.dataset.navStatus = obj.id;
+          panel.appendChild(statusEl);
+          const abortBtn = document.createElement('button');
+          abortBtn.type = 'button';
+          abortBtn.className = 'tool-text-button';
+          abortBtn.textContent = 'Abort — Hold Position';
+          abortBtn.addEventListener('click', () => abortTransit(obj, navRt));
+          panel.appendChild(abortBtn);
+          objectsTab.appendChild(panel);
+        } else if (obj.type === 'SHIP') {
+          const nav = getNavState(obj.id);
+          const quickItems = curatedQuickDestinations(obj).map(o => ({ id: o.id, label: objectDisplayName(o) }));
+          const radialItems = quickItems.concat([{ id: '__CUSTOM__', label: 'Custom' }]);
+          createRadialPicker(objectsTab, {
+            code: nextNavCode(), title: 'Destination', accent: NAV_ACCENT,
+            items: radialItems, selectedId: nav.destinationId,
+            onPick: id => { nav.destinationId = id; renderObjectsTab(); }
+          });
+
+          const allOthers = params.objects.filter(o => o.id !== obj.id && !isDescendantOf(o.id, obj.id, byId));
+          createSelectPanel(objectsTab, {
+            code: nextNavCode(), title: 'Full Destination List', accent: NAV_ACCENT, sub: true,
+            options: allOthers.map(o => o.id),
+            labels: Object.assign({}, NONE_LABEL, Object.fromEntries(allOthers.map(o => [o.id, objectDisplayName(o)]))),
+            value: (nav.destinationId && nav.destinationId !== '__CUSTOM__') ? nav.destinationId : '',
+            onChange: v => { nav.destinationId = v; renderObjectsTab(); }
+          });
+
+          createSliderPanel(objectsTab, {
+            code: nextNavCode(), title: 'Approach Speed', unit: 'u/s', accent: NAV_ACCENT,
+            min: 1, max: 60, step: 1, value: nav.speed, format: v => Math.round(v),
+            onInput: v => { nav.speed = v; }
+          });
+          objectsTab.appendChild(el('div', 'tool-hint', 'Impulse only — warp is avoided this close to a gravity well.'));
+
+          // Two different escalating levels of override, per the brief:
+          // a named destination always gets a "Standard Orbit" (a sensible
+          // distance auto-picked, see standardArrivalDistanceFor) unless
+          // Arrival Orbit is switched to Custom, which overrides just the
+          // insertion Distance/Angle/Speed — the destination itself (so
+          // the Parent) is still whatever was picked above. Custom
+          // Coordinates on the radial is a level beyond that: no named
+          // destination at all, so Parent becomes part of the override too.
+          const isCustomCoords = nav.destinationId === '__CUSTOM__';
+          if (!isCustomCoords) {
+            createSelectPanel(objectsTab, {
+              code: nextNavCode(), title: 'Arrival Orbit', accent: NAV_ACCENT,
+              options: ['Standard', 'Custom'],
+              labels: { Standard: 'Standard Orbit', Custom: 'Custom Coordinates' },
+              value: nav.arrivalMode,
+              onChange: v => { nav.arrivalMode = v; renderObjectsTab(); }
+            });
+          }
+
+          let customParentObj = null;
+          if (isCustomCoords) {
+            const customParentOptions = allOthers.map(o => o.id);
+            // Auto-adopt the first option as the real pick, not just the
+            // select's displayed default — otherwise Engage stays
+            // disabled until the user touches a control that visually
+            // already looks chosen.
+            if (!nav.customParentId && customParentOptions[0]) nav.customParentId = customParentOptions[0];
+            createSelectPanel(objectsTab, {
+              code: nextNavCode(), title: 'Custom Parent', accent: NAV_ACCENT, sub: true,
+              options: customParentOptions,
+              labels: Object.assign({}, NONE_LABEL, Object.fromEntries(allOthers.map(o => [o.id, objectDisplayName(o)]))),
+              value: nav.customParentId || customParentOptions[0] || '',
+              onChange: v => { nav.customParentId = v; renderObjectsTab(); }
+            });
+            customParentObj = byId.get(nav.customParentId) || byId.get(customParentOptions[0]);
+          } else if (nav.destinationId && nav.arrivalMode === 'Custom') {
+            customParentObj = byId.get(nav.destinationId); // Parent is fixed to the chosen destination — nothing to pick
+          }
+
+          if (customParentObj) {
+            const customMinDist = minOrbitDistanceFor(obj, customParentObj);
+            if (nav.customDistance < customMinDist) nav.customDistance = customMinDist;
+            createSliderPanel(objectsTab, {
+              code: nextNavCode(), title: 'Custom Distance', unit: 'u', accent: NAV_ACCENT, sub: true,
+              min: customMinDist, max: 200, step: 0.5, value: nav.customDistance, format: v => v.toFixed(1),
+              onInput: v => { nav.customDistance = v; }
+            });
+            createSliderPanel(objectsTab, {
+              code: nextNavCode(), title: 'Custom Angle', unit: '°', accent: NAV_ACCENT, sub: true,
+              min: 0, max: 360, step: 1, value: nav.customAngle, format: v => Math.round(v),
+              onInput: v => { nav.customAngle = v; }
+            });
+            createSliderPanel(objectsTab, {
+              code: nextNavCode(), title: 'Custom Orbit Speed', unit: '× circular', accent: NAV_ACCENT, sub: true,
+              min: 0.1, max: 2.0, step: 0.05, value: nav.customSpeedRatio, format: v => v.toFixed(2),
+              onInput: v => { nav.customSpeedRatio = v; }
+            });
+          }
+
+          const engagePanel = el('div', 'lcars-panel');
+          engagePanel.style.setProperty('--accent', NAV_ACCENT);
+          const { headerEl: engageHeader } = panelHeader(nextNavCode(), 'Engage');
+          engagePanel.appendChild(engageHeader);
+          const canEngage = !!(nav.destinationId && (nav.destinationId !== '__CUSTOM__' || nav.customParentId));
+          const engageBtn = document.createElement('button');
+          engageBtn.type = 'button';
+          engageBtn.className = 'tool-text-button';
+          engageBtn.textContent = 'Engage';
+          engageBtn.disabled = !canEngage;
+          engageBtn.addEventListener('click', () => {
+            let destParentId, destDistance, destAngleDeg, destSpeedRatio;
+            if (nav.destinationId === '__CUSTOM__') {
+              destParentId = nav.customParentId;
+              destDistance = nav.customDistance;
+              destAngleDeg = nav.customAngle;
+              destSpeedRatio = nav.customSpeedRatio;
+            } else {
+              const destObj = byId.get(nav.destinationId);
+              if (!destObj) return;
+              destParentId = destObj.id;
+              if (nav.arrivalMode === 'Custom') {
+                destDistance = nav.customDistance;
+                destAngleDeg = nav.customAngle;
+                destSpeedRatio = nav.customSpeedRatio;
+              } else {
+                destDistance = standardArrivalDistanceFor(obj, destObj);
+                const destParentRt = objectRuntime.get(destObj.id);
+                const shipRt = objectRuntime.get(obj.id);
+                // Arrive on the side the ship is already coming from,
+                // rather than a random face of the destination — avoids
+                // an arrival point that reads as "flew through the planet."
+                destAngleDeg = (destParentRt && shipRt)
+                  ? (Math.atan2(shipRt.absZ - destParentRt.absZ, shipRt.absX - destParentRt.absX) * 180 / Math.PI + 360) % 360
+                  : Math.floor(Math.random() * 360);
+                destSpeedRatio = 1.0;
+              }
+            }
+            beginTransit(obj, { parentId: destParentId, distance: destDistance, angleDeg: destAngleDeg, speedRatio: destSpeedRatio, cruiseSpeed: nav.speed });
+            renderObjectsTab();
+          });
+          engagePanel.appendChild(engageBtn);
+          objectsTab.appendChild(engagePanel);
+        }
+      }
 
       if (obj.parentId) {
         const parentObj = byId.get(obj.parentId);
@@ -2522,10 +3070,11 @@
         const rt = targetId ? objectRuntime.get(targetId) : null;
         if (rt) {
           let fx = 0.7, fz = 0.7; // default trailing direction for a stationary (e.g. root) target
-          if (rt.gState) {
-            const sp = Math.hypot(rt.gState.vx, rt.gState.vz);
-            if (sp > 1e-4) { fx = rt.gState.vx / sp; fz = rt.gState.vz / sp; }
-          }
+          // moveDir (see updateObjectsPhysics) is live world-space motion —
+          // correct whether rt is orbiting or a Ship mid-transit, unlike
+          // the raw gState.vx/vz this used to read (which goes stale
+          // during a transit and ignores a moving parent's own motion).
+          if (rt.moveSpeed > 1e-4) { fx = rt.moveDirX; fz = rt.moveDirZ; }
           camera.position.set(rt.absX - fx * params.camera.distance, rt.absY + params.camera.height, rt.absZ - fz * params.camera.distance);
           camera.lookAt(rt.absX, rt.absY, rt.absZ);
         }
