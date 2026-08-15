@@ -42,101 +42,103 @@
          instead of letting the browser scroll/zoom the page with it. */
       touch-action: none;
     }
-    /* --- LCARS HUD --- */
-    /* Closed by default: summoned with a double-tap/double-click anywhere in
-       the scene, dismissed with a double-tap/double-click anywhere on it.
-       The frame is built from four flat, opaque blocks laid out on a grid —
-       a header bar, a corner cap, a category-colored spine, and the body —
-       instead of one translucent rounded card. No blur, no gradients, no
-       drop shadows: LCARS was flat design before "flat design" had a name. */
-    .lcars-hud {
+    /* --- LCARS Corner Panels --- */
+    /* Four independent, independently-collapsible panels, one per screen
+       corner, instead of one mega-panel with tabs inside it — Objects
+       (upper-left), Appearance (lower-left), Camera (upper-right), Files
+       (lower-right). Each is just a flat colored header (always visible —
+       that's the whole discovery mechanism now, no hidden summon gesture)
+       over a collapsible body. The swept, LCARS-signature corner rounds
+       toward screen center on every one; the two screen edges it touches
+       stay sharp. No blur, no gradients, no drop shadows: LCARS was flat
+       design before "flat design" had a name. */
+    .lcars-corner-panel {
       position: fixed;
-      top: 20px;
-      right: 20px;
-      width: 348px;
-      max-height: calc(100vh - 40px);
-      display: none;
-      grid-template-columns: 1fr 26px;
-      grid-template-rows: 46px 1fr;
-      grid-template-areas:
-        "bar  cap"
-        "body spine";
-      gap: 3px; /* the black "grout" seam between blocks */
-      background: #000;
-      color: #e8e8e8;
+      width: 296px;
+      max-height: calc(50vh - 30px);
+      display: flex;
+      flex-direction: column;
       font-family: 'Antonio', 'Arial Narrow', sans-serif;
+      color: #e8e8e8;
+      background: #000;
       z-index: 20;
       overflow: hidden;
-      /* Menu stays finger-friendly: taps register instantly and double-tap
+      /* Panels stay finger-friendly: taps register instantly and double-tap
          never triggers the browser's page-zoom gesture. */
       touch-action: manipulation;
     }
 
-    .lcars-hud.is-open { display: grid; }
+    .lcars-corner-panel--tl { top: 20px; left: 20px; border-radius: 2px 2px 20px 2px; }
+    .lcars-corner-panel--tr { top: 20px; right: 20px; border-radius: 2px 2px 2px 20px; }
+    /* Bottom-anchored panels grow upward from a handle pinned to the
+       screen edge — column-reverse keeps the (first-in-DOM) header
+       visually at the bottom, body opening above it. */
+    .lcars-corner-panel--bl { bottom: 20px; left: 20px; flex-direction: column-reverse; border-radius: 2px 20px 2px 2px; }
+    .lcars-corner-panel--br { bottom: 20px; right: 20px; flex-direction: column-reverse; border-radius: 20px 2px 2px 2px; }
 
-    /* The elbow: header bar + spine meeting a swept corner cap. Sharp on the
-       two outer corners that align with the screen edge, one big radius on
-       the inner corner facing the content — LCARS's signature joint. */
-    .lcars-hud__bar {
-      grid-area: bar;
+    .lcars-corner-header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      background: var(--accent, #ff9c00);
+    }
+
+    .lcars-corner-toggle {
+      flex: 1 1 auto;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 16px;
-      background: var(--lcars-butterscotch);
-      color: #000;
-    }
-
-    .lcars-hud__bar-label {
-      flex: 1 1 auto;
-      min-width: 0;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      font-size: 15px;
+      padding: 10px 14px;
+      appearance: none;
+      -webkit-appearance: none;
+      border: none;
+      background: none;
+      font-family: inherit;
+      font-size: 13px;
       font-weight: 700;
       letter-spacing: 2px;
       text-transform: uppercase;
+      color: #000;
+      cursor: pointer;
     }
 
-    .lcars-hud__bar-code {
-      flex-shrink: 0;
+    .lcars-corner-toggle:hover { filter: brightness(1.1); }
+
+    .lcars-corner-toggle::after {
+      content: '▸';
+      font-size: 11px;
+      margin-left: 8px;
+      transition: transform 0.15s;
+    }
+
+    .lcars-corner-toggle[aria-expanded="true"]::after { transform: rotate(90deg); }
+
+    .lcars-corner-body {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px;
+      min-height: 0;
+      overflow-y: auto;
+      background: #000;
+    }
+
+    .lcars-corner-panel.is-open .lcars-corner-body { display: flex; }
+
+    /* Objects panel only: a rebuildable sub-container nested inside the
+       body, so renderObjectsTab()'s innerHTML wipe never touches the
+       selection bar sitting alongside it in the body. */
+    .lcars-corner-content {
       display: flex;
       flex-direction: column;
-      align-items: flex-end;
-      gap: 2px;
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 1px;
-      opacity: 0.7;
+      gap: 10px;
+      min-width: 0;
     }
 
-    .lcars-hud__bar-code-row {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-
-    .lcars-hud__bar-stardate {
-      font-size: 9px;
-      font-variant-numeric: tabular-nums;
-    }
-
-    /* A quiet "system is alive" pulse — purely decorative */
-    .lcars-hud__pulse {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: #000;
-      animation: lcars-pulse 2.4s ease-in-out infinite;
-    }
-
-    @keyframes lcars-pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.25; }
-    }
-
-    /* Muted by default — this is the only way interface sound turns on */
+    /* Muted by default — this is the only way interface sound turns on.
+       Lives in the Camera header (always visible, open or closed) rather
+       than any one panel's body, so it's reachable without opening
+       anything first. */
     .lcars-hud__audio-toggle {
       flex-shrink: 0;
       display: flex;
@@ -144,8 +146,8 @@
       gap: 4px;
       appearance: none;
       -webkit-appearance: none;
-      margin: 0 8px;
-      padding: 3px 8px;
+      margin: 0 6px;
+      padding: 3px 7px;
       font-family: inherit;
       font-size: 8px;
       font-weight: 700;
@@ -173,72 +175,24 @@
       background: #000;
     }
 
-    .lcars-hud__cap {
-      grid-area: cap;
-      background: var(--lcars-butterscotch);
-      border-radius: 2px 2px 2px 999px;
-    }
-
-    /* Tracks the active tab's color — a live "you are here" wayfinding cue.
-       Also carries a few flavor readouts: purely cosmetic telemetry that
-       reads as "living system" without meaning anything or asking for
-       any attention — never focusable, never announced to assistive tech. */
-    .lcars-hud__spine {
-      grid-area: spine;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-evenly;
-      padding: 12px 0;
-      background: var(--spine-accent, var(--lcars-butterscotch));
-      transition: background 0.2s;
-    }
-
-    .lcars-hud__tick {
-      writing-mode: vertical-rl;
+    /* Stardate readout — also in the Camera header, purely decorative
+       "system is alive" flavor, never focusable or announced. */
+    .lcars-hud__bar-stardate {
+      flex-shrink: 0;
+      margin-right: 10px;
       font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      color: rgba(0, 0, 0, 0.5);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: rgba(0, 0, 0, 0.6);
       font-variant-numeric: tabular-nums;
     }
-
-    .lcars-hud__body {
-      grid-area: body;
-      min-height: 0; /* let this grid item shrink so its own child can scroll */
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      background: #000;
-    }
-
-    .lcars-hud-hint {
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      padding: 8px 16px;
-      appearance: none;
-      -webkit-appearance: none;
-      border: none;
-      font-family: 'Antonio', 'Arial Narrow', sans-serif;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #000;
-      background: var(--lcars-butterscotch);
-      border-radius: 2px 2px 2px 20px; /* echoes the cap's sweep, closed-state preview */
-      z-index: 20;
-      cursor: pointer;
-    }
-
-    .lcars-hud-hint[hidden] { display: none; }
 
     .lcars-hud__selection {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 16px;
+      padding: 8px 10px;
+      margin: -10px -10px 0;
       background: var(--lcars-alert);
       color: #000;
       font-size: 11px;
@@ -273,54 +227,6 @@
     }
 
     .lcars-hud__selection-clear:hover { background: rgba(0, 0, 0, 0.3); }
-
-    .lcars-menu {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 3px;
-      padding: 10px 10px 8px;
-      background: #000;
-    }
-
-    .lcars-tab {
-      flex: 1 1 auto;
-      min-width: 72px;
-      text-align: center;
-      padding: 7px 8px;
-      font-family: inherit;
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: var(--tab-accent, #999);
-      background: var(--tab-accent-dim, rgba(255, 255, 255, 0.06));
-      border: none;
-      border-radius: 3px;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .lcars-tab:hover { filter: brightness(1.3); }
-
-    .lcars-tab.is-active {
-      background: var(--tab-accent, #ff9c00);
-      color: #000;
-      font-weight: 700;
-    }
-
-    .lcars-tabpanels {
-      padding: 12px;
-      overflow-y: auto;
-      background: #000;
-    }
-
-    .lcars-tabpanel {
-      display: none;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .lcars-tabpanel.is-active { display: flex; }
 
     .lcars-panel {
       background: #0d0d0d;
@@ -625,6 +531,79 @@
       text-transform: uppercase;
     }
 
+    .tool-hint {
+      margin: -4px 0 2px;
+      padding: 0 4px;
+      font-size: 9px;
+      line-height: 1.4;
+      letter-spacing: 0.3px;
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    /* The Navigation radial picker (Ship destination / Satellite Point At
+       Target) — a real trigonometric circle of buttons around a center
+       hub, positioned in JS (see createRadialPicker), not a styled list. */
+    .nav-radial {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      margin: 10px auto 4px;
+    }
+
+    .nav-radial__hub {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background: var(--accent, #ff9c00);
+      color: #000;
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 4px;
+      line-height: 1.15;
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+    }
+
+    .nav-radial__opt {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.06);
+      color: #ccc;
+      font-family: inherit;
+      font-size: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+      cursor: pointer;
+      padding: 2px;
+      line-height: 1.05;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .nav-radial__opt:hover { filter: brightness(1.25); }
+
+    .nav-radial__opt.is-active {
+      background: var(--accent, #ff9c00);
+      color: #000;
+      border-color: #000;
+      font-weight: 800;
+    }
+
     /* Object chips (Objects tab): one per stellar body, colored by its own
        type accent, plus a "+" chip to add a new one. */
     .tool-object-row {
@@ -662,11 +641,45 @@
       border-color: transparent;
     }
 
+    /* Orbital Telemetry (Objects tab) — a compact live-value grid instead
+       of one full-height panel per number, so four readouts cost roughly
+       what one slider does. */
+    .tool-telemetry-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 12px;
+      margin-top: 4px;
+    }
+
+    .tool-telemetry-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 6px;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .tool-telemetry-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: rgba(255, 255, 255, 0.5);
+      text-transform: uppercase;
+    }
+
+    .tool-telemetry-value {
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
     /* One consistent themed focus ring for every keyboard-reachable control,
        instead of leaving it to inconsistent browser defaults — and restoring
        it where .tool-slider/.tool-toggle removed the native outline entirely. */
-    .lcars-hud-hint:focus-visible,
-    .lcars-tab:focus-visible,
+    .lcars-corner-toggle:focus-visible,
     .tool-slider:focus-visible,
     .tool-toggle:focus-visible,
     .tool-select__opt:focus-visible,
@@ -678,6 +691,7 @@
     .tool-program-delete:focus-visible,
     .tool-textarea:focus-visible,
     .tool-object-chip:focus-visible,
+    .nav-radial__opt:focus-visible,
     .lcars-hud__selection-clear:focus-visible,
     .lcars-hud__audio-toggle:focus-visible {
       outline: 2px solid var(--lcars-alert);
@@ -692,40 +706,9 @@
 <body>
   <div id="canvas-container"></div>
 
-  <button type="button" class="lcars-hud-hint" id="lcars-hud-hint" aria-label="Open control menu">HUD-01 · double-tap to open</button>
-
-  <div class="lcars-hud" id="lcars-hud">
-    <div class="lcars-hud__bar">
-      <span class="lcars-hud__bar-label">Controls</span>
-      <button type="button" class="lcars-hud__audio-toggle" id="lcars-audio-toggle" aria-pressed="false" aria-label="Toggle interface sound">
-        <span class="lcars-hud__audio-dot" aria-hidden="true"></span>
-        SND
-      </button>
-      <span class="lcars-hud__bar-code" aria-hidden="true">
-        <span class="lcars-hud__bar-code-row">
-          <span class="lcars-hud__pulse"></span>
-          HUD-01
-        </span>
-        <span class="lcars-hud__bar-stardate" id="lcars-stardate">SD 47000.00</span>
-      </span>
-    </div>
-    <div class="lcars-hud__cap"></div>
-    <div class="lcars-hud__body">
-      <div class="lcars-hud__selection" id="lcars-selection" hidden>
-        <span class="lcars-hud__selection-label">SEL</span>
-        <span class="lcars-hud__selection-value" id="lcars-selection-value">—</span>
-        <button class="lcars-hud__selection-clear" id="lcars-selection-clear" type="button" aria-label="Clear selection">✕</button>
-      </div>
-      <nav class="lcars-menu" id="lcars-menu"></nav>
-      <div class="lcars-tabpanels" id="lcars-tabpanels"></div>
-    </div>
-    <div class="lcars-hud__spine" aria-hidden="true">
-      <span class="lcars-hud__tick"></span>
-      <span class="lcars-hud__tick"></span>
-      <span class="lcars-hud__tick"></span>
-      <span class="lcars-hud__tick"></span>
-    </div>
-  </div>
+  <!-- The four corner control panels (Objects/Appearance/Camera/Files) are
+       built entirely in JS — see "LCARS Corner Panels" further down —
+       matching how their inner content panels were already constructed. -->
 
   <script>
     // --- Application State & Parameters ---
@@ -745,14 +728,24 @@
       // How every object's surface (except a Singularity, always unlit) is
       // shaded — see buildObjectMaterial(). 'Shaded' = normal PBR gradient
       // response, 'Posterized' = 3-band cel/toon shading, 'Flat Light' =
-      // no shading at all, flat color regardless of light angle.
-      lightingMode: 'Shaded',
+      // no shading at all, flat color regardless of light angle. Defaults
+      // to 'Flat Light' — LCARS was flat design before "flat design" had
+      // a name, and that same solid-color, no-gradient language extends
+      // naturally from the HUD chrome to the construct itself.
+      lightingMode: 'Flat Light',
       // Every stellar object: { id, name, type, parentId, mass, size,
       // shape, color, orbit: { distance, speedRatio, angleDeg },
-      // pathColor, pathVisible }. parentId: null means "fixed at the
-      // universal center" — normally true of exactly one root object
-      // (e.g. the Sun). Populated with a default Terran solar system
-      // below, after OBJECT_TYPES is defined.
+      // pathColor, pathVisible, isStation }. parentId: null means "fixed
+      // at the universal center" — normally true of exactly one root
+      // object (e.g. the Sun). isStation flags a SATELLITE as a named
+      // Federation landmark (spacedock/drydock) — priority-listed in the
+      // Navigation destination picker, purely a curation hint. A SHIP or
+      // SATELLITE also carries Navigation state — see "Ships & Satellites:
+      // Navigation" further down — { rotationMode, spinRate,
+      // pointTargetId } for satellites, all optional with sensible
+      // fallbacks (same pattern as pathColor/pathVisible above) so older
+      // saved programs load without migration. Populated with a default
+      // Terran solar system below, after OBJECT_TYPES is defined.
       objects: []
     };
 
@@ -1278,6 +1271,63 @@
       return openConicPoints(e, a * (1 - e * e), periapsisAngle, SEGMENTS);
     }
 
+    // Same seed-condition derivation as computeOrbitShapePoints, but
+    // returning the numbers themselves (semi-major axis, eccentricity,
+    // period) instead of a line's worth of points — feeds the Orbital
+    // Telemetry readout. period is null for an unbound (parabolic/
+    // hyperbolic) trajectory, which has no period.
+    function computeOrbitElements(mu, distance, angleDeg, speedRatio) {
+      const r0 = distance;
+      const v0 = speedRatio * Math.sqrt(mu / r0);
+      const energy = 0.5 * v0 * v0 - mu / r0;
+      if (Math.abs(energy) < 1e-6) return { a: Infinity, e: 1, period: null };
+      const a = -mu / (2 * energy);
+      const e = Math.abs(1 - r0 / a);
+      const period = a > 0 ? 2 * Math.PI * Math.sqrt(Math.pow(a, 3) / mu) : null;
+      return { a, e, period };
+    }
+
+    // The smallest Orbit Distance that keeps a child clear of its parent's
+    // own rendered body — both radii approximated as half their Size
+    // (a fair clearance estimate for every built-in shape, Starship/Custom
+    // included, without needing each one's exact silhouette). Recomputed
+    // wherever the Objects tab panel is rebuilt, so it responds to Size
+    // changes at the next natural render rather than needing its own
+    // live-drag wiring.
+    function minOrbitDistanceFor(obj, parentObj) {
+      const parentRadius = 0.5 * ((parentObj && parentObj.size) || 1);
+      const ownRadius = 0.5 * (obj.size || 1);
+      return Math.max(2, parentRadius + ownRadius + 1);
+    }
+
+    // The "Standard Orbit" default distance a Ship settles into on arrival
+    // — comfortably outside minOrbitDistanceFor's collision floor, but
+    // closer for a station/drydock (a ship parks near a station, not out
+    // at a planet's own orbital shell).
+    function standardArrivalDistanceFor(obj, destObj) {
+      const minDist = minOrbitDistanceFor(obj, destObj);
+      return destObj.isStation ? minDist * 1.3 : minDist * 2.5;
+    }
+
+    // The Navigation radial's curated "everyone knows where these are"
+    // shortlist — stations first (the whole point of this feature), then
+    // the Sun, then planets, then whatever's left — capped at 7 so an 8th
+    // "Custom" slot (added by the caller, not here) still fits the wheel
+    // without crowding. Reused for both a Ship's flight destination and a
+    // Satellite's Point At Target list; excludes the object itself and
+    // anything that's its own descendant (same cycle guard as the Parent
+    // selector, since a Ship "arriving" at its own child makes no sense).
+    function curatedQuickDestinations(obj) {
+      const byId = new Map(params.objects.map(o => [o.id, o]));
+      const eligible = params.objects.filter(o => o.id !== obj.id && !isDescendantOf(o.id, obj.id, byId));
+      const stations = eligible.filter(o => o.isStation);
+      const suns = eligible.filter(o => o.type === 'SUN' && !o.isStation);
+      const planets = eligible.filter(o => o.type === 'PLANET' && !o.isStation);
+      const named = new Set(stations.concat(suns, planets));
+      const rest = eligible.filter(o => !named.has(o));
+      return stations.concat(suns, planets, rest).slice(0, 7);
+    }
+
     const orbitPathLines = new Map(); // object id -> THREE.Line
 
     function disposeOrbitPathLine(id) {
@@ -1363,6 +1413,104 @@
       reseedObjectOrbit(obj);
     }
 
+    // --- Ships & Satellites: Navigation ---
+    // Unlike every other object here (which only ever launches once, at
+    // creation or a manual Distance/Speed/Angle edit — see
+    // reseedObjectOrbit), a Ship or a stationed Satellite can be given a
+    // new course mid-simulation: fly out from wherever it currently is,
+    // under its own power (not a gravity-integrated trajectory — this is
+    // "engines on," not ballistic), and settle into an orbit around a
+    // chosen destination. rt.transit (runtime-only, like gState) is the
+    // presence of an active course; its absence means "flying the normal
+    // orbit its params.objects entry already describes."
+    //
+    // The eased straight-line flight below is a deliberate simplification,
+    // not an oversight: this sim's whole physics model is patched 2-body
+    // (each object only ever feels its immediate parent's pull, see the
+    // Shared Gravity Law section), which has no notion of a transfer orbit
+    // between two different parents in the first place. Chasing the
+    // destination's own live position every frame (rather than a fixed
+    // point computed once at departure) means a ship "leads" a moving
+    // target the way a helmsman plotting an intercept course would,
+    // without needing real n-body integration to do it.
+    function beginTransit(obj, dest) {
+      const rt = objectRuntime.get(obj.id);
+      if (!rt) return;
+      disposeOrbitPathLine(obj.id); // stale while the destination parent hasn't been set yet
+      const destParentRt = objectRuntime.get(dest.parentId);
+      const angleRad = dest.angleDeg * Math.PI / 180;
+      const targetX = (destParentRt ? destParentRt.absX : 0) + Math.cos(angleRad) * dest.distance;
+      const targetZ = (destParentRt ? destParentRt.absZ : 0) + Math.sin(angleRad) * dest.distance;
+      const travelDist = Math.hypot(targetX - rt.absX, targetZ - rt.absZ);
+      const cruiseSpeed = Math.max(1, dest.cruiseSpeed || 10);
+      rt.transit = {
+        destParentId: dest.parentId,
+        destDistance: dest.distance,
+        destAngleDeg: dest.angleDeg,
+        destSpeedRatio: dest.speedRatio,
+        startAbsX: rt.absX,
+        startAbsZ: rt.absZ,
+        elapsed: 0,
+        duration: Math.min(180, Math.max(1.5, travelDist / cruiseSpeed))
+      };
+      playOpen();
+    }
+
+    // Advances one object's in-progress transit by `delta`, writing its
+    // new absolute position directly (bypassing the gravity/parent branch
+    // in updateObjectsPhysics entirely) — called from there, not directly.
+    function updateShipTransit(obj, rt, delta) {
+      const tr = rt.transit;
+      tr.elapsed += delta;
+      const t = Math.min(1, tr.duration > 0 ? tr.elapsed / tr.duration : 1);
+      const ease = t * t * (3 - 2 * t); // smoothstep — gentle accelerate/decelerate, not a jarring linear snap
+      const destParentRt = tr.destParentId ? objectRuntime.get(tr.destParentId) : null;
+      const angleRad = tr.destAngleDeg * Math.PI / 180;
+      const targetX = (destParentRt ? destParentRt.absX : 0) + Math.cos(angleRad) * tr.destDistance;
+      const targetZ = (destParentRt ? destParentRt.absZ : 0) + Math.sin(angleRad) * tr.destDistance;
+      rt.absX = tr.startAbsX + (targetX - tr.startAbsX) * ease;
+      rt.absY = 0;
+      rt.absZ = tr.startAbsZ + (targetZ - tr.startAbsZ) * ease;
+      if (t >= 1) completeTransit(obj, rt);
+    }
+
+    // Arrival: hands the object off to the normal orbit machinery exactly
+    // where the transit's easing already left it (the destination's own
+    // angleDeg/distance offset), so there's no snap — reseedObjectOrbit
+    // just needs to launch a fresh gState from that same point.
+    function completeTransit(obj, rt) {
+      const tr = rt.transit;
+      rt.transit = null;
+      obj.parentId = tr.destParentId;
+      obj.orbit.distance = tr.destDistance;
+      obj.orbit.angleDeg = tr.destAngleDeg;
+      obj.orbit.speedRatio = tr.destSpeedRatio;
+      rebuildHierarchyOrder();
+      reseedObjectOrbit(obj);
+      playConfirm();
+      if (focusedObjectId === obj.id) renderObjectsTab();
+    }
+
+    // Graceful cancel: rather than snapping back to a now-stale pre-flight
+    // gState, converts wherever the ship *currently* is into a fresh
+    // circular holding orbit around its still-unchanged parent — a
+    // "hold position" maneuver, not an undo.
+    function abortTransit(obj, rt) {
+      if (!rt.transit) return;
+      rt.transit = null;
+      const parentObj = obj.parentId ? params.objects.find(o => o.id === obj.parentId) : null;
+      const parentRt = obj.parentId ? objectRuntime.get(obj.parentId) : null;
+      if (parentRt) {
+        const dx = rt.absX - parentRt.absX, dz = rt.absZ - parentRt.absZ;
+        obj.orbit.distance = Math.max(minOrbitDistanceFor(obj, parentObj), Math.hypot(dx, dz));
+        obj.orbit.angleDeg = (Math.atan2(dz, dx) * 180 / Math.PI + 360) % 360;
+        obj.orbit.speedRatio = 1.0;
+      }
+      reseedObjectOrbit(obj);
+      renderObjectsTab();
+      playDismiss();
+    }
+
     function destroyObjectRuntime(id) {
       const rt = objectRuntime.get(id);
       if (!rt) return;
@@ -1414,6 +1562,21 @@
 
     let focusedObjectId = null;   // which object's detail panel the Objects tab shows
     let selectedObjectId = null;  // which object is picked in the 3D scene (see Entity Selection)
+
+    // In-progress Navigation picks (Destination, Approach Speed, Arrival
+    // Orbit mode, Custom Coordinates) for whichever Ship/Satellite is
+    // focused — deliberately NOT part of params.objects: this is "what's
+    // dialed into the console right now," not simulation state, so it
+    // never gets saved/exported and resets to sensible defaults each time
+    // a fresh object is focused. Keyed by object id so switching focus
+    // back and forth doesn't lose an in-progress course.
+    const navPickerState = new Map();
+    function getNavState(id) {
+      if (!navPickerState.has(id)) {
+        navPickerState.set(id, { destinationId: null, speed: 10, arrivalMode: 'Standard', customParentId: null, customDistance: 10, customAngle: 0, customSpeedRatio: 1.0 });
+      }
+      return navPickerState.get(id);
+    }
 
     // "Click + to add stellar object" — defaults its parent to whatever's
     // currently most massive (the closest thing to "its logical hierarchy
@@ -1490,7 +1653,12 @@
     // standing correct while fitting the whole system into a few minutes
     // of watchable motion. Earth's Moon, an Artificial Satellite, and the
     // Enterprise all orbit Earth at hand-picked (not astronomically real)
-    // distances, spaced apart so they don't collide.
+    // distances, spaced apart so they don't collide. Earth Spacedock and
+    // Utopia Planitia (Mars) are Federation landmarks — isStation flags
+    // them as priority picks in the Navigation destination radial (see
+    // "Ships & Satellites: Navigation"); Spacedock also demonstrates a
+    // Satellite's Point At Target rotation mode by facing Sol rather than
+    // the default of just facing its own parent.
     function buildDefaultSolarSystem() {
       const bodies = [
         { name: 'Sol', type: 'SUN', mass: 3000, size: 9, parent: null, distance: 0, angle: 0 },
@@ -1499,8 +1667,10 @@
         { name: 'Earth', type: 'PLANET', mass: 43, size: 1.0, parent: 'Sol', distance: 25, angle: 80 },
         { name: 'Moon', type: 'MOON', mass: 10, size: 0.3, parent: 'Earth', distance: 6, angle: 0 },
         { name: 'Comm Satellite', type: 'SATELLITE', mass: 2, size: 0.3, shape: 'Prism', parent: 'Earth', distance: 4, angle: 120 },
+        { name: 'Earth Spacedock', type: 'SATELLITE', mass: 2, size: 0.35, shape: 'Prism', parent: 'Earth', distance: 5.2, angle: 300, isStation: true, rotationMode: 'PointTarget', pointTarget: 'Sol' },
         { name: 'Enterprise', type: 'SHIP', mass: 3, size: 0.9, shape: 'Starship', color: '#e8e8e8', parent: 'Earth', distance: 8, angle: 240 },
         { name: 'Mars', type: 'PLANET', mass: 21, size: 0.55, parent: 'Sol', distance: 30.9, angle: 120 },
+        { name: 'Utopia Planitia', type: 'SATELLITE', mass: 2, size: 0.35, shape: 'Prism', parent: 'Mars', distance: 3, angle: 0, isStation: true },
         { name: 'Ceres', type: 'ASTEROID', mass: 5, size: 0.25, shape: 'Prism', parent: 'Sol', distance: 41.1, angle: 160 },
         { name: 'Jupiter', type: 'PLANET', mass: 296, size: 3.2, parent: 'Sol', distance: 57, angle: 200 },
         { name: 'Saturn', type: 'PLANET', mass: 197, size: 2.8, parent: 'Sol', distance: 77.4, angle: 240 },
@@ -1523,6 +1693,9 @@
           color: b.color || meta.color,
           orbit: { distance: b.distance, speedRatio: 1.0, angleDeg: b.angle }
         };
+        if (b.isStation) obj.isStation = true;
+        if (b.rotationMode) obj.rotationMode = b.rotationMode;
+        if (b.pointTarget) obj.pointTargetId = idByName[b.pointTarget];
         params.objects.push(obj);
         createObjectRuntime(obj);
       });
@@ -1549,8 +1722,11 @@
       hierarchyOrderCache.forEach(obj => {
         const rt = objectRuntime.get(obj.id);
         if (!rt) return;
+        const prevAbsX = rt.absX, prevAbsZ = rt.absZ; // last frame's position, if any
         const parentRt = obj.parentId ? objectRuntime.get(obj.parentId) : null;
-        if (!parentRt) {
+        if (rt.transit) {
+          updateShipTransit(obj, rt, delta);
+        } else if (!parentRt) {
           rt.absX = 0; rt.absY = 0; rt.absZ = 0;
         } else {
           if (rt.gState) integrateGravity(rt.gState, delta, Math.max(0.5, parentRt.config.mass));
@@ -1559,7 +1735,44 @@
           rt.absZ = parentRt.absZ + (rt.gState ? rt.gState.z : 0);
         }
         rt.root.position.set(rt.absX, rt.absY, rt.absZ);
-        if (rt.gState && parentRt) rt.root.lookAt(parentRt.absX, parentRt.absY, parentRt.absZ);
+
+        // Live world-space movement direction/speed, from this frame's
+        // actual displacement — valid uniformly whether that motion is
+        // orbital or an active transit, unlike gState.vx/vz (which only
+        // exists mid-orbit and goes stale during a transit). Drives Ship
+        // nose orientation below and the Follow Selected camera's trail.
+        if (prevAbsX !== undefined && delta > 0) {
+          const dx = rt.absX - prevAbsX, dz = rt.absZ - prevAbsZ;
+          const mlen = Math.hypot(dx, dz);
+          if (mlen > 1e-6) { rt.moveDirX = dx / mlen; rt.moveDirZ = dz / mlen; rt.moveSpeed = mlen / delta; }
+          else { rt.moveSpeed = 0; }
+        } else {
+          rt.moveDirX = 0; rt.moveDirZ = 0; rt.moveSpeed = 0;
+        }
+
+        // --- Orientation --- A Ship always noses toward its actual
+        // direction of travel (see moveDir above) — orbiting or in
+        // transit, the mechanism is identical either way, which is the
+        // whole point of computing it that way. A Satellite instead
+        // holds whichever attitude its Rotation Mode says (spins in
+        // place for artificial gravity, or keeps a fixed target in view
+        // for signal pointing) — travel direction is irrelevant to it.
+        // Everything else keeps the original tidal-lock-toward-parent
+        // default.
+        if (obj.type === 'SHIP') {
+          if (rt.moveSpeed > 1e-4) rt.root.rotation.y = Math.atan2(rt.moveDirX, rt.moveDirZ);
+        } else if (obj.type === 'SATELLITE') {
+          if ((obj.rotationMode || 'Spin') === 'PointTarget') {
+            const targetRt = objectRuntime.get(obj.pointTargetId) || parentRt;
+            if (targetRt) rt.root.lookAt(targetRt.absX, targetRt.absY, targetRt.absZ);
+          } else {
+            rt.spinAngle = (rt.spinAngle || 0) + (obj.spinRate || 40) * Math.PI / 180 * delta;
+            rt.root.rotation.y = rt.spinAngle;
+          }
+        } else if (rt.gState && parentRt) {
+          rt.root.lookAt(parentRt.absX, parentRt.absY, parentRt.absZ);
+        }
+
         // The path line's shape is fixed (see rebuildOrbitPathLine), but
         // its parent may itself be moving — keep it centered live.
         const pathLine = orbitPathLines.get(obj.id);
@@ -1586,9 +1799,22 @@
     let selectionHelper = null;
     let selectedEntity = null;
 
-    const selectionBar = document.getElementById('lcars-selection');
-    const selectionValueEl = document.getElementById('lcars-selection-value');
-    const selectionClearBtn = document.getElementById('lcars-selection-clear');
+    // Built detached here (rather than looked up via getElementById from
+    // static HTML) and appended into the Objects panel's body once that
+    // panel exists further down — same DOM nodes either way, just built
+    // where the code that drives them lives instead of a separate markup
+    // block, matching how every other HUD control is already constructed.
+    const selectionBar = el('div', 'lcars-hud__selection');
+    selectionBar.hidden = true;
+    selectionBar.appendChild(el('span', 'lcars-hud__selection-label', 'SEL'));
+    const selectionValueEl = el('span', 'lcars-hud__selection-value', '—');
+    selectionBar.appendChild(selectionValueEl);
+    const selectionClearBtn = document.createElement('button');
+    selectionClearBtn.type = 'button';
+    selectionClearBtn.className = 'lcars-hud__selection-clear';
+    selectionClearBtn.setAttribute('aria-label', 'Clear selection');
+    selectionClearBtn.textContent = '✕';
+    selectionBar.appendChild(selectionClearBtn);
 
     function selectableTargets() {
       const targets = [];
@@ -1622,11 +1848,12 @@
         entity.root.getWorldPosition(targetPos);
         controls.target.copy(targetPos);
       }
-      // Selecting in the 3D scene also focuses that object's controls —
-      // useful even when the Objects tab isn't the one currently open.
+      // Selecting in the 3D scene also focuses that object's controls and
+      // opens the Objects panel, even if it was collapsed at the time.
       if (entity.objectId) {
         focusedObjectId = entity.objectId;
         if (typeof renderObjectsTab === 'function') renderObjectsTab();
+        if (typeof objectsPanel !== 'undefined' && objectsPanel) objectsPanel.setOpen(true);
       }
     }
 
@@ -1675,15 +1902,13 @@
       clearSelection();
     });
 
-    // --- Living-system telemetry (purely decorative, aria-hidden) ---
-    // A stardate ticker and a few flavor readouts in the spine — they don't
-    // mean anything and never take focus or a pointer event; they exist so
-    // the HUD reads as a system that's alive, not a static prop. Only runs
-    // while the HUD is actually open, so there's nothing to update (or for
-    // a screen reader to skip past) while it's summoned away.
-    const stardateEl = document.getElementById('lcars-stardate');
-    const spineTicks = document.querySelectorAll('.lcars-hud__tick');
-    let telemetryTimer = null;
+    // --- Living-system telemetry (purely decorative except the orbital
+    // readout) --- A stardate ticker in the Camera header — doesn't mean
+    // anything, exists so the HUD reads as a system that's alive. Runs
+    // continuously now that the corner panels' headers (and thus this
+    // readout) are always on screen, open or collapsed.
+    const stardateEl = el('span', 'lcars-hud__bar-stardate');
+    stardateEl.setAttribute('aria-hidden', 'true');
 
     function computeStardate() {
       const now = new Date();
@@ -1695,57 +1920,54 @@
       return 'SD ' + whole + '.' + frac;
     }
 
-    function randomTick() {
-      return Math.floor(Math.random() * 0xfff).toString(16).toUpperCase().padStart(3, '0');
+    // Keeps the focused object's Orbital Telemetry panel (if the Objects
+    // panel is actually open right now) reading live current values —
+    // piggybacked on this existing 1s ticker instead of a dedicated timer
+    // or a per-frame DOM write. A no-op whenever there's nothing relevant
+    // to update, so it's always safe to call unconditionally.
+    function updateOrbitalTelemetryReadout() {
+      if (!objectsPanel || !objectsPanel.isOpen()) return;
+      const obj = params.objects.find(o => o.id === focusedObjectId);
+      if (!obj || !obj.parentId) return;
+      const rt = objectRuntime.get(obj.id);
+      const parentRt = objectRuntime.get(obj.parentId);
+      if (!rt || !parentRt) return;
+      const mu = Math.max(0.5, parentRt.config.mass);
+      const elements = computeOrbitElements(mu, obj.orbit.distance, obj.orbit.angleDeg, obj.orbit.speedRatio);
+      const dist = rt.gState ? Math.hypot(rt.gState.x, rt.gState.z) : obj.orbit.distance;
+      const speed = rt.gState ? Math.hypot(rt.gState.vx, rt.gState.vz) : 0;
+      const setField = (key, text) => {
+        const fieldEl = document.querySelector('[data-telemetry="' + key + '"]');
+        if (fieldEl) fieldEl.textContent = text;
+      };
+      setField('period', elements.period !== null ? elements.period.toFixed(1) + ' s' : 'UNBOUND');
+      setField('speed', speed.toFixed(2) + ' u/s');
+      setField('distance', dist.toFixed(1) + ' u');
+      setField('eccentricity', elements.e.toFixed(3));
     }
 
-    function startTelemetry() {
-      if (telemetryTimer) return;
-      if (stardateEl) stardateEl.textContent = computeStardate();
-      spineTicks.forEach(t => { t.textContent = randomTick(); });
-      telemetryTimer = setInterval(() => {
-        if (stardateEl) stardateEl.textContent = computeStardate();
-        const i = Math.floor(Math.random() * spineTicks.length);
-        if (spineTicks[i]) spineTicks[i].textContent = randomTick();
-      }, 1000);
+    // Same piggyback as the telemetry readout above: keeps a Ship's ETA
+    // line current without its own timer. The Navigation panel only ever
+    // renders one ship's status at a time (whichever object is focused),
+    // so there's at most one element to find.
+    function updateNavStatusReadout() {
+      if (!objectsPanel || !objectsPanel.isOpen()) return;
+      const statusEl = document.querySelector('[data-nav-status]');
+      if (!statusEl) return;
+      const rt = objectRuntime.get(statusEl.dataset.navStatus);
+      if (!rt || !rt.transit) return;
+      const remaining = Math.max(0, rt.transit.duration - rt.transit.elapsed);
+      statusEl.textContent = 'ETA ' + remaining.toFixed(1) + 's';
     }
 
-    function stopTelemetry() {
-      clearInterval(telemetryTimer);
-      telemetryTimer = null;
-    }
+    stardateEl.textContent = computeStardate();
+    setInterval(() => {
+      stardateEl.textContent = computeStardate();
+      updateOrbitalTelemetryReadout();
+      updateNavStatusReadout();
+    }, 1000);
 
-    // --- HUD Open/Close (double-tap/double-click to summon or dismiss) ---
-    const hudEl = document.getElementById('lcars-hud');
-    const hudHintEl = document.getElementById('lcars-hud-hint');
-    let menuOpen = false;
-
-    function openMenu() {
-      if (menuOpen) return;
-      menuOpen = true;
-      hudEl.classList.add('is-open');
-      hudHintEl.hidden = true;
-      startTelemetry();
-      playOpen();
-      const active = TABS.find(t => t.id === activeTabId);
-      if (active) active.btn.focus();
-    }
-
-    function closeMenu() {
-      if (!menuOpen) return;
-      menuOpen = false;
-      hudEl.classList.remove('is-open');
-      hudHintEl.hidden = false;
-      stopTelemetry();
-      playDismiss();
-      hudHintEl.focus();
-    }
-
-    hudHintEl.addEventListener('click', openMenu);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && menuOpen) closeMenu();
-    });
-
+    // --- Double-tap/double-click to select an object in the 3D scene ---
     const DOUBLE_TAP_MS = 350;
     const DOUBLE_TAP_PX = 28;
 
@@ -1770,15 +1992,7 @@
     }
 
     watchDoubleActivate(renderer.domElement, (e) => {
-      if (!menuOpen) {
-        openMenu();
-        return;
-      }
       handleActivateAt(e.clientX, e.clientY);
-    });
-
-    watchDoubleActivate(hudEl, () => {
-      if (menuOpen) closeMenu();
     });
 
     function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
@@ -1823,7 +2037,15 @@
     function playDismiss() { playBlip(990, 660, 0.09, 0.06); }
     function playOpen() { playBlip(520, 1040, 0.12, 0.06); }
 
-    const audioToggleBtn = document.getElementById('lcars-audio-toggle');
+    const audioToggleBtn = document.createElement('button');
+    audioToggleBtn.type = 'button';
+    audioToggleBtn.className = 'lcars-hud__audio-toggle';
+    audioToggleBtn.setAttribute('aria-pressed', 'false');
+    audioToggleBtn.setAttribute('aria-label', 'Toggle interface sound');
+    const audioDot = document.createElement('span');
+    audioDot.className = 'lcars-hud__audio-dot';
+    audioToggleBtn.appendChild(audioDot);
+    audioToggleBtn.appendChild(document.createTextNode('SND'));
     audioToggleBtn.addEventListener('click', () => {
       audioEnabled = !audioEnabled;
       audioToggleBtn.setAttribute('aria-pressed', audioEnabled ? 'true' : 'false');
@@ -1862,6 +2084,7 @@
       const valueText = v => String(format(v)) + (opts.unit ? ' ' + opts.unit : '');
       const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
       if (opts.visible === false) panel.style.display = 'none';
+      if (opts.accent) panel.style.setProperty('--accent', opts.accent);
       const { headerEl, titleId } = panelHeader(opts.code, opts.title);
       panel.appendChild(headerEl);
 
@@ -1900,7 +2123,8 @@
     function createTogglePanel(container, opts) {
       const onLabel = opts.onLabel || 'ENABLED';
       const offLabel = opts.offLabel || 'DISABLED';
-      const panel = el('div', 'lcars-panel');
+      const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
+      if (opts.accent) panel.style.setProperty('--accent', opts.accent);
       const { headerEl, titleId } = panelHeader(opts.code, opts.title);
       panel.appendChild(headerEl);
 
@@ -1931,7 +2155,8 @@
 
     function createSelectPanel(container, opts) {
       const labels = opts.labels || {};
-      const panel = el('div', 'lcars-panel');
+      const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
+      if (opts.accent) panel.style.setProperty('--accent', opts.accent);
       const { headerEl, titleId } = panelHeader(opts.code, opts.title);
       panel.appendChild(headerEl);
 
@@ -2065,76 +2290,132 @@
       container.appendChild(panel);
     }
 
-    // --- LCARS HUD: menu + tabs scaffold ---
-    const hudMenu = document.getElementById('lcars-menu');
-    const hudPanels = document.getElementById('lcars-tabpanels');
-    hudMenu.setAttribute('role', 'tablist');
-    hudMenu.setAttribute('aria-label', 'Control categories');
-
-    const TABS = [
-      { id: 'objects', label: 'Objects', accent: LCARS_PALETTE.periwinkle },
-      { id: 'camera', label: 'Camera', accent: LCARS_PALETTE.ice },
-      { id: 'memory', label: 'Memory', accent: LCARS_PALETTE.plum }
-    ];
-
-    const tabPanelEls = {};
-    TABS.forEach((tab, i) => {
-      const btn = el('button', 'lcars-tab' + (i === 0 ? ' is-active' : ''), tab.label);
-      btn.type = 'button';
-      btn.id = 'lcars-tab-' + tab.id;
-      btn.setAttribute('role', 'tab');
-      btn.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
-      btn.setAttribute('aria-controls', 'lcars-tabpanel-' + tab.id);
-      btn.tabIndex = i === 0 ? 0 : -1;
-      btn.style.setProperty('--tab-accent', tab.accent);
-      btn.style.setProperty('--tab-accent-dim', dimHex(tab.accent, 0.85));
-      btn.addEventListener('click', () => activateTab(tab.id));
-      hudMenu.appendChild(btn);
-      tab.btn = btn;
-
-      const panelEl = el('div', 'lcars-tabpanel' + (i === 0 ? ' is-active' : ''));
-      panelEl.id = 'lcars-tabpanel-' + tab.id;
-      panelEl.setAttribute('role', 'tabpanel');
-      panelEl.setAttribute('aria-labelledby', btn.id);
-      panelEl.style.setProperty('--accent', tab.accent);
-      hudPanels.appendChild(panelEl);
-      tabPanelEls[tab.id] = panelEl;
-    });
-
-    let activeTabId = TABS[0].id;
-
-    function activateTab(id) {
-      activeTabId = id;
-      const activeTab = TABS.find(t => t.id === id);
-      if (activeTab) hudEl.style.setProperty('--spine-accent', activeTab.accent);
-      TABS.forEach(tab => {
-        const active = tab.id === id;
-        tab.btn.classList.toggle('is-active', active);
-        tab.btn.setAttribute('aria-selected', active ? 'true' : 'false');
-        tab.btn.tabIndex = active ? 0 : -1;
-        tabPanelEls[tab.id].classList.toggle('is-active', active);
-      });
-      playTick(); // no-ops silently at the initial bootstrap call — audio starts off
+    // Shortens a display name to something that still reads at ~8px inside
+    // a 50px circle — first word only, past a length where the full name
+    // would just wrap into mush. The full name is always shown elsewhere
+    // (the hub, and the inset override dropdown), so this is purely a
+    // radial-button-label concern.
+    function radialLabel(name) {
+      return name.length > 10 ? name.split(' ')[0].slice(0, 9) : name;
     }
 
-    hudMenu.addEventListener('keydown', (e) => {
-      const currentIndex = TABS.findIndex(t => t.id === activeTabId);
-      let nextIndex = null;
-      if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % TABS.length;
-      else if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + TABS.length) % TABS.length;
-      else if (e.key === 'Home') nextIndex = 0;
-      else if (e.key === 'End') nextIndex = TABS.length - 1;
-      if (nextIndex === null) return;
-      e.preventDefault();
-      activateTab(TABS[nextIndex].id);
-      TABS[nextIndex].btn.focus();
+    // The circular "quick picks" menu Mike Okuda proposed: a center hub
+    // (showing the current pick) ringed by up to 8 buttons laid out with
+    // real trigonometry, not a styled list. Used for both a Ship's flight
+    // destination and a Satellite's Point At Target — same widget, same
+    // curated item list, different meaning to the caller. Always a full
+    // teardown/rebuild on pick (via the caller's onPick, which re-renders
+    // the Objects tab) rather than an in-place refresh, matching how every
+    // other structural change in this panel already works.
+    function createRadialPicker(container, opts) {
+      // opts: { code, title, accent, items: [{id,label}], selectedId, onPick(id) }
+      const panel = el('div', 'lcars-panel' + (opts.sub ? ' lcars-panel--sub' : ''));
+      if (opts.accent) panel.style.setProperty('--accent', opts.accent);
+      const { headerEl } = panelHeader(opts.code, opts.title);
+      panel.appendChild(headerEl);
+
+      const selected = opts.items.find(it => it.id === opts.selectedId);
+      const valueEl = el('div', 'tool-value tool-value--text', selected ? selected.label : 'NONE SELECTED');
+      panel.appendChild(valueEl);
+
+      const wheel = el('div', 'nav-radial');
+      const hub = el('div', 'nav-radial__hub', selected ? radialLabel(selected.label) : '—');
+      wheel.appendChild(hub);
+
+      const n = opts.items.length;
+      const radius = 84;
+      opts.items.forEach((item, i) => {
+        const angle = (-90 + (360 / Math.max(n, 1)) * i) * Math.PI / 180;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'nav-radial__opt' + (item.id === opts.selectedId ? ' is-active' : '');
+        btn.style.left = (110 + Math.cos(angle) * radius) + 'px';
+        btn.style.top = (110 + Math.sin(angle) * radius) + 'px';
+        btn.textContent = radialLabel(item.label);
+        btn.title = item.label;
+        btn.setAttribute('aria-pressed', item.id === opts.selectedId ? 'true' : 'false');
+        btn.addEventListener('click', () => { playTick(); opts.onPick(item.id); });
+        wheel.appendChild(btn);
+      });
+      panel.appendChild(wheel);
+
+      container.appendChild(panel);
+    }
+
+    // --- LCARS HUD: four independent corner panels ---
+    // Mike Okuda's redesign: rather than one mega-panel with internal tabs,
+    // each control category is its own small panel pinned to a screen
+    // corner, opened/closed independently of the others. Objects (what to
+    // build) and Appearance (how it looks) share the left edge; Camera
+    // (how you're looking at it) and Files (save/load/export) share the
+    // right — grouped by "who reaches for this together," not by leftover
+    // tab order.
+    const ALL_CORNER_PANELS = [];
+
+    function createCornerPanel(config) {
+      // config: { id, corner: 'tl'|'tr'|'bl'|'br', label, accent }
+      const panel = el('div', 'lcars-corner-panel lcars-corner-panel--' + config.corner);
+      panel.style.setProperty('--accent', config.accent);
+
+      const headerRow = el('div', 'lcars-corner-header');
+      const toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'lcars-corner-toggle';
+      const bodyId = 'lcars-corner-body-' + config.id;
+      toggleBtn.setAttribute('aria-expanded', 'false');
+      toggleBtn.setAttribute('aria-controls', bodyId);
+      toggleBtn.textContent = config.label;
+      headerRow.appendChild(toggleBtn);
+
+      const body = el('div', 'lcars-corner-body');
+      body.id = bodyId;
+
+      panel.appendChild(headerRow);
+      panel.appendChild(body);
+      document.body.appendChild(panel);
+
+      let open = false;
+      function setOpen(v) {
+        if (open === v) return;
+        open = v;
+        panel.classList.toggle('is-open', v);
+        toggleBtn.setAttribute('aria-expanded', v ? 'true' : 'false');
+        if (v) playOpen(); else playDismiss(); // no-ops silently while audio is off
+      }
+      toggleBtn.addEventListener('click', () => setOpen(!open));
+
+      const instance = { panel, headerRow, toggleBtn, body, setOpen, isOpen: () => open };
+      ALL_CORNER_PANELS.push(instance);
+      return instance;
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      ALL_CORNER_PANELS.forEach(p => { if (p.isOpen()) p.setOpen(false); });
     });
 
-    activateTab(TABS[0].id); // seed the spine color to match the default active tab
+    const objectsPanel = createCornerPanel({ id: 'objects', corner: 'tl', label: 'Objects', accent: LCARS_PALETTE.periwinkle });
+    const appearancePanel = createCornerPanel({ id: 'appearance', corner: 'bl', label: 'Appearance', accent: LCARS_PALETTE.gold });
+    const cameraPanel = createCornerPanel({ id: 'camera', corner: 'tr', label: 'Camera', accent: LCARS_PALETTE.ice });
+    const memoryPanel = createCornerPanel({ id: 'memory', corner: 'br', label: 'Files', accent: LCARS_PALETTE.plum });
 
-    const objectsTab = tabPanelEls.objects;
-    const cameraTab = tabPanelEls.camera;
-    const memoryTab = tabPanelEls.memory;
+    // Camera's header is always on screen (open or collapsed), so the
+    // stardate readout and the sound toggle live there rather than buried
+    // in any one panel's collapsible body.
+    cameraPanel.headerRow.appendChild(stardateEl);
+    cameraPanel.headerRow.appendChild(audioToggleBtn);
+
+    // The selection bar sits directly in the Objects panel body, above a
+    // nested sub-container that renderObjectsTab() tears down and rebuilds
+    // on every structural change — keeping the bar itself untouched by
+    // those rebuilds.
+    objectsPanel.body.appendChild(selectionBar);
+    const objectsTab = el('div', 'lcars-corner-content');
+    objectsPanel.body.appendChild(objectsTab);
+
+    const appearanceTab = appearancePanel.body;
+    const cameraTab = cameraPanel.body;
+    const memoryTab = memoryPanel.body;
 
     // 1. Objects — the dynamic hierarchy: a chip row (one per object, "+"
     // to add another) and a detail panel for whichever object is focused.
@@ -2248,8 +2529,224 @@
         if (rt) rt.allMeshes.forEach(m => { if (m.material && m.material.color) m.material.color.set(c); });
       }});
 
+      // --- Ships & Satellites: Navigation --- The contextual capability:
+      // selecting a Ship or Satellite surfaces this section, set apart
+      // (alert-cyan accent) from the rest of the object's controls since
+      // it governs behavior no other object type has. A Satellite's own
+      // attitude (Spin for artificial gravity, or Point At Target for
+      // signal pointing) lives here too, since it's a navigation concern
+      // rather than an appearance one.
+      if (obj.type === 'SHIP' || obj.type === 'SATELLITE') {
+        const navRt = objectRuntime.get(obj.id);
+        const inTransit = !!(navRt && navRt.transit);
+        const NAV_ACCENT = LCARS_PALETTE.alert;
+        let navCode = 1;
+        const nextNavCode = () => 'NAV-' + String(navCode++).padStart(2, '0');
+        const NONE_LABEL = { '': 'NONE SELECTED' };
+
+        const navTitlePanel = el('div', 'lcars-panel');
+        navTitlePanel.style.setProperty('--accent', NAV_ACCENT);
+        const { headerEl: navTitleHeader } = panelHeader('NAV', 'Navigation');
+        navTitlePanel.appendChild(navTitleHeader);
+        objectsTab.appendChild(navTitlePanel);
+
+        if (obj.type === 'SATELLITE') {
+          createSelectPanel(objectsTab, {
+            code: nextNavCode(), title: 'Rotation Mode', accent: NAV_ACCENT,
+            options: ['Spin', 'PointTarget'],
+            labels: { Spin: 'Spin (Artificial Gravity)', PointTarget: 'Point At Target' },
+            value: obj.rotationMode || 'Spin',
+            onChange: v => { obj.rotationMode = v; renderObjectsTab(); }
+          });
+          if ((obj.rotationMode || 'Spin') === 'Spin') {
+            createSliderPanel(objectsTab, {
+              code: nextNavCode(), title: 'Spin Rate', unit: '°/s', accent: NAV_ACCENT, sub: true,
+              min: 5, max: 360, step: 5, value: obj.spinRate || 40, format: v => Math.round(v),
+              onInput: v => { obj.spinRate = v; }
+            });
+          } else {
+            const targetItems = curatedQuickDestinations(obj).map(o => ({ id: o.id, label: objectDisplayName(o) }));
+            createRadialPicker(objectsTab, {
+              code: nextNavCode(), title: 'Point Target', accent: NAV_ACCENT, sub: true,
+              items: targetItems, selectedId: obj.pointTargetId || obj.parentId,
+              onPick: id => { obj.pointTargetId = id; renderObjectsTab(); }
+            });
+            // Inset override — same "circular menu for defaults, inset
+            // menu to override" split the Ship Destination picker below
+            // uses, for reaching anything not in the curated wheel.
+            const allOthers = params.objects.filter(o => o.id !== obj.id);
+            createSelectPanel(objectsTab, {
+              code: nextNavCode(), title: 'Full Target List', accent: NAV_ACCENT, sub: true,
+              options: allOthers.map(o => o.id),
+              labels: Object.assign({}, NONE_LABEL, Object.fromEntries(allOthers.map(o => [o.id, objectDisplayName(o)]))),
+              value: obj.pointTargetId || obj.parentId || '',
+              onChange: v => { obj.pointTargetId = v; renderObjectsTab(); }
+            });
+          }
+        }
+
+        if (obj.type === 'SHIP' && inTransit) {
+          const tr = navRt.transit;
+          const destObj = byId.get(tr.destParentId);
+          const panel = el('div', 'lcars-panel');
+          panel.style.setProperty('--accent', NAV_ACCENT);
+          const { headerEl } = panelHeader(nextNavCode(), 'Navigation');
+          panel.appendChild(headerEl);
+          panel.appendChild(el('div', 'tool-value tool-value--text', 'EN ROUTE: ' + (destObj ? objectDisplayName(destObj) : 'UNKNOWN')));
+          const remaining = Math.max(0, tr.duration - tr.elapsed);
+          const statusEl = el('div', 'tool-hint', 'ETA ' + remaining.toFixed(1) + 's');
+          statusEl.dataset.navStatus = obj.id;
+          panel.appendChild(statusEl);
+          const abortBtn = document.createElement('button');
+          abortBtn.type = 'button';
+          abortBtn.className = 'tool-text-button';
+          abortBtn.textContent = 'Abort — Hold Position';
+          abortBtn.addEventListener('click', () => abortTransit(obj, navRt));
+          panel.appendChild(abortBtn);
+          objectsTab.appendChild(panel);
+        } else if (obj.type === 'SHIP') {
+          const nav = getNavState(obj.id);
+          const quickItems = curatedQuickDestinations(obj).map(o => ({ id: o.id, label: objectDisplayName(o) }));
+          const radialItems = quickItems.concat([{ id: '__CUSTOM__', label: 'Custom' }]);
+          createRadialPicker(objectsTab, {
+            code: nextNavCode(), title: 'Destination', accent: NAV_ACCENT,
+            items: radialItems, selectedId: nav.destinationId,
+            onPick: id => { nav.destinationId = id; renderObjectsTab(); }
+          });
+
+          const allOthers = params.objects.filter(o => o.id !== obj.id && !isDescendantOf(o.id, obj.id, byId));
+          createSelectPanel(objectsTab, {
+            code: nextNavCode(), title: 'Full Destination List', accent: NAV_ACCENT, sub: true,
+            options: allOthers.map(o => o.id),
+            labels: Object.assign({}, NONE_LABEL, Object.fromEntries(allOthers.map(o => [o.id, objectDisplayName(o)]))),
+            value: (nav.destinationId && nav.destinationId !== '__CUSTOM__') ? nav.destinationId : '',
+            onChange: v => { nav.destinationId = v; renderObjectsTab(); }
+          });
+
+          createSliderPanel(objectsTab, {
+            code: nextNavCode(), title: 'Approach Speed', unit: 'u/s', accent: NAV_ACCENT,
+            min: 1, max: 60, step: 1, value: nav.speed, format: v => Math.round(v),
+            onInput: v => { nav.speed = v; }
+          });
+          objectsTab.appendChild(el('div', 'tool-hint', 'Impulse only — warp is avoided this close to a gravity well.'));
+
+          // Two different escalating levels of override, per the brief:
+          // a named destination always gets a "Standard Orbit" (a sensible
+          // distance auto-picked, see standardArrivalDistanceFor) unless
+          // Arrival Orbit is switched to Custom, which overrides just the
+          // insertion Distance/Angle/Speed — the destination itself (so
+          // the Parent) is still whatever was picked above. Custom
+          // Coordinates on the radial is a level beyond that: no named
+          // destination at all, so Parent becomes part of the override too.
+          const isCustomCoords = nav.destinationId === '__CUSTOM__';
+          if (!isCustomCoords) {
+            createSelectPanel(objectsTab, {
+              code: nextNavCode(), title: 'Arrival Orbit', accent: NAV_ACCENT,
+              options: ['Standard', 'Custom'],
+              labels: { Standard: 'Standard Orbit', Custom: 'Custom Coordinates' },
+              value: nav.arrivalMode,
+              onChange: v => { nav.arrivalMode = v; renderObjectsTab(); }
+            });
+          }
+
+          let customParentObj = null;
+          if (isCustomCoords) {
+            const customParentOptions = allOthers.map(o => o.id);
+            // Auto-adopt the first option as the real pick, not just the
+            // select's displayed default — otherwise Engage stays
+            // disabled until the user touches a control that visually
+            // already looks chosen.
+            if (!nav.customParentId && customParentOptions[0]) nav.customParentId = customParentOptions[0];
+            createSelectPanel(objectsTab, {
+              code: nextNavCode(), title: 'Custom Parent', accent: NAV_ACCENT, sub: true,
+              options: customParentOptions,
+              labels: Object.assign({}, NONE_LABEL, Object.fromEntries(allOthers.map(o => [o.id, objectDisplayName(o)]))),
+              value: nav.customParentId || customParentOptions[0] || '',
+              onChange: v => { nav.customParentId = v; renderObjectsTab(); }
+            });
+            customParentObj = byId.get(nav.customParentId) || byId.get(customParentOptions[0]);
+          } else if (nav.destinationId && nav.arrivalMode === 'Custom') {
+            customParentObj = byId.get(nav.destinationId); // Parent is fixed to the chosen destination — nothing to pick
+          }
+
+          if (customParentObj) {
+            const customMinDist = minOrbitDistanceFor(obj, customParentObj);
+            if (nav.customDistance < customMinDist) nav.customDistance = customMinDist;
+            createSliderPanel(objectsTab, {
+              code: nextNavCode(), title: 'Custom Distance', unit: 'u', accent: NAV_ACCENT, sub: true,
+              min: customMinDist, max: 200, step: 0.5, value: nav.customDistance, format: v => v.toFixed(1),
+              onInput: v => { nav.customDistance = v; }
+            });
+            createSliderPanel(objectsTab, {
+              code: nextNavCode(), title: 'Custom Angle', unit: '°', accent: NAV_ACCENT, sub: true,
+              min: 0, max: 360, step: 1, value: nav.customAngle, format: v => Math.round(v),
+              onInput: v => { nav.customAngle = v; }
+            });
+            createSliderPanel(objectsTab, {
+              code: nextNavCode(), title: 'Custom Orbit Speed', unit: '× circular', accent: NAV_ACCENT, sub: true,
+              min: 0.1, max: 2.0, step: 0.05, value: nav.customSpeedRatio, format: v => v.toFixed(2),
+              onInput: v => { nav.customSpeedRatio = v; }
+            });
+          }
+
+          const engagePanel = el('div', 'lcars-panel');
+          engagePanel.style.setProperty('--accent', NAV_ACCENT);
+          const { headerEl: engageHeader } = panelHeader(nextNavCode(), 'Engage');
+          engagePanel.appendChild(engageHeader);
+          const canEngage = !!(nav.destinationId && (nav.destinationId !== '__CUSTOM__' || nav.customParentId));
+          const engageBtn = document.createElement('button');
+          engageBtn.type = 'button';
+          engageBtn.className = 'tool-text-button';
+          engageBtn.textContent = 'Engage';
+          engageBtn.disabled = !canEngage;
+          engageBtn.addEventListener('click', () => {
+            let destParentId, destDistance, destAngleDeg, destSpeedRatio;
+            if (nav.destinationId === '__CUSTOM__') {
+              destParentId = nav.customParentId;
+              destDistance = nav.customDistance;
+              destAngleDeg = nav.customAngle;
+              destSpeedRatio = nav.customSpeedRatio;
+            } else {
+              const destObj = byId.get(nav.destinationId);
+              if (!destObj) return;
+              destParentId = destObj.id;
+              if (nav.arrivalMode === 'Custom') {
+                destDistance = nav.customDistance;
+                destAngleDeg = nav.customAngle;
+                destSpeedRatio = nav.customSpeedRatio;
+              } else {
+                destDistance = standardArrivalDistanceFor(obj, destObj);
+                const destParentRt = objectRuntime.get(destObj.id);
+                const shipRt = objectRuntime.get(obj.id);
+                // Arrive on the side the ship is already coming from,
+                // rather than a random face of the destination — avoids
+                // an arrival point that reads as "flew through the planet."
+                destAngleDeg = (destParentRt && shipRt)
+                  ? (Math.atan2(shipRt.absZ - destParentRt.absZ, shipRt.absX - destParentRt.absX) * 180 / Math.PI + 360) % 360
+                  : Math.floor(Math.random() * 360);
+                destSpeedRatio = 1.0;
+              }
+            }
+            beginTransit(obj, { parentId: destParentId, distance: destDistance, angleDeg: destAngleDeg, speedRatio: destSpeedRatio, cruiseSpeed: nav.speed });
+            renderObjectsTab();
+          });
+          engagePanel.appendChild(engageBtn);
+          objectsTab.appendChild(engagePanel);
+        }
+      }
+
       if (obj.parentId) {
-        createSliderPanel(objectsTab, { code: 'OBJ-09', title: 'Orbit Distance', unit: 'u', min: 2, max: 200, step: 0.5, value: obj.orbit.distance, format: v => v.toFixed(1), sub: true, onInput: v => {
+        const parentObj = byId.get(obj.parentId);
+        const minDist = minOrbitDistanceFor(obj, parentObj);
+        // Self-heal an already-invalid stored distance (an old save, or a
+        // parent/self Size change since this was last set) instead of just
+        // raising the slider's floor out from under a value that's still
+        // sitting below it.
+        if (obj.orbit.distance < minDist) {
+          obj.orbit.distance = minDist;
+          reseedObjectOrbit(obj);
+        }
+        createSliderPanel(objectsTab, { code: 'OBJ-09', title: 'Orbit Distance', unit: 'u', min: minDist, max: 200, step: 0.5, value: obj.orbit.distance, format: v => v.toFixed(1), sub: true, onInput: v => {
           obj.orbit.distance = v;
           reseedObjectOrbit(obj);
         }});
@@ -2269,10 +2766,41 @@
           obj.pathVisible = v;
           rebuildOrbitPathLine(obj); // handles both showing and (via the !pathVisible no-op + dispose above) hiding
         }});
+
+        // Orbital Telemetry — Dr. Tyson's ask: real numbers, not just a
+        // moving shape. Seeded here with the current values, then kept
+        // live by the existing once-a-second telemetry ticker (see
+        // updateOrbitalTelemetryReadout) rather than a new timer.
+        const parentRtForTel = objectRuntime.get(obj.parentId);
+        const muForTel = parentRtForTel ? Math.max(0.5, parentRtForTel.config.mass) : 0.5;
+        const telElements = computeOrbitElements(muForTel, obj.orbit.distance, obj.orbit.angleDeg, obj.orbit.speedRatio);
+        const telRt = objectRuntime.get(obj.id);
+        const liveDist = telRt && telRt.gState ? Math.hypot(telRt.gState.x, telRt.gState.z) : obj.orbit.distance;
+        const liveSpeed = telRt && telRt.gState ? Math.hypot(telRt.gState.vx, telRt.gState.vz) : 0;
+
+        const telPanel = el('div', 'lcars-panel lcars-panel--sub');
+        const { headerEl: telHeader } = panelHeader('OBJ-14', 'Orbital Telemetry');
+        telPanel.appendChild(telHeader);
+        const telGrid = el('div', 'tool-telemetry-grid');
+        [
+          ['period', 'PERIOD', telElements.period !== null ? telElements.period.toFixed(1) + ' s' : 'UNBOUND'],
+          ['speed', 'SPEED', liveSpeed.toFixed(2) + ' u/s'],
+          ['distance', 'DISTANCE', liveDist.toFixed(1) + ' u'],
+          ['eccentricity', 'ECCENTRICITY', telElements.e.toFixed(3)]
+        ].forEach(([key, label, text]) => {
+          const row = el('div', 'tool-telemetry-row');
+          row.appendChild(el('span', 'tool-telemetry-label', label));
+          const val = el('span', 'tool-telemetry-value', text);
+          val.dataset.telemetry = key;
+          row.appendChild(val);
+          telGrid.appendChild(row);
+        });
+        telPanel.appendChild(telGrid);
+        objectsTab.appendChild(telPanel);
       }
 
       const deleteWrap = el('div', 'lcars-panel');
-      const { headerEl } = panelHeader('OBJ-14', 'Remove');
+      const { headerEl } = panelHeader('OBJ-15', 'Remove');
       deleteWrap.appendChild(headerEl);
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
@@ -2312,8 +2840,15 @@
     createSliderPanel(cameraTab, { code: 'CAM-04', title: 'Follow Height', unit: 'u', min: 0.5, max: 30, step: 0.5, value: params.camera.height, format: v => v.toFixed(1), onInput: v => {
       params.camera.height = v;
     }});
-    createSelectPanel(cameraTab, {
-      code: 'CAM-05',
+
+    // 3. Appearance — how the construct is rendered: shading style, plus
+    // "master" orbit-path controls that apply to every object at once
+    // instead of visiting each one individually on the Objects panel. Not
+    // a persistent override layer — after applying, each object's own
+    // Path Color/Light Orbit Path controls remain the live source of
+    // truth and can still be adjusted individually.
+    createSelectPanel(appearanceTab, {
+      code: 'APR-01',
       title: 'Lighting Mode',
       options: ['Shaded', 'Posterized', 'Flat Light'],
       value: params.lightingMode,
@@ -2322,12 +2857,7 @@
         applyLightingModeToAllObjects();
       }
     });
-    // "Master" controls: apply to every object's orbit-path at once,
-    // instead of visiting each one individually on the Objects tab. Not a
-    // persistent override layer — after applying, each object's own Path
-    // Color/Light Orbit Path controls remain the live source of truth and
-    // can still be adjusted individually.
-    createColorPanel(cameraTab, { code: 'CAM-06', title: 'Set All Path Colors', value: '#33ffff', onChange: c => {
+    createColorPanel(appearanceTab, { code: 'APR-02', title: 'Set All Path Colors', value: '#33ffff', onChange: c => {
       params.objects.forEach(o => {
         if (!o.parentId) return;
         o.pathColor = c;
@@ -2335,8 +2865,8 @@
       });
       renderObjectsTab(); // refresh the focused object's own Path Color panel if it changed
     }});
-    createTogglePanel(cameraTab, {
-      code: 'CAM-07',
+    createTogglePanel(appearanceTab, {
+      code: 'APR-03',
       title: 'Light All Orbit Paths',
       value: params.objects.length > 0 && params.objects.filter(o => o.parentId).every(o => o.pathVisible),
       onLabel: 'ALL LIT',
@@ -2351,7 +2881,7 @@
       }
     });
 
-    // 3. Memory — "Computer, save current program." Local named saves, plus
+    // 4. Memory — "Computer, save current program." Local named saves, plus
     // a portable export/import code for taking a program to another browser.
     function createSaveProgramPanel(container, onSave) {
       const panel = el('div', 'lcars-panel');
@@ -2540,10 +3070,11 @@
         const rt = targetId ? objectRuntime.get(targetId) : null;
         if (rt) {
           let fx = 0.7, fz = 0.7; // default trailing direction for a stationary (e.g. root) target
-          if (rt.gState) {
-            const sp = Math.hypot(rt.gState.vx, rt.gState.vz);
-            if (sp > 1e-4) { fx = rt.gState.vx / sp; fz = rt.gState.vz / sp; }
-          }
+          // moveDir (see updateObjectsPhysics) is live world-space motion —
+          // correct whether rt is orbiting or a Ship mid-transit, unlike
+          // the raw gState.vx/vz this used to read (which goes stale
+          // during a transit and ignores a moving parent's own motion).
+          if (rt.moveSpeed > 1e-4) { fx = rt.moveDirX; fz = rt.moveDirZ; }
           camera.position.set(rt.absX - fx * params.camera.distance, rt.absY + params.camera.height, rt.absZ - fz * params.camera.distance);
           camera.lookAt(rt.absX, rt.absY, rt.absZ);
         }
