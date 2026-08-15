@@ -42,101 +42,103 @@
          instead of letting the browser scroll/zoom the page with it. */
       touch-action: none;
     }
-    /* --- LCARS HUD --- */
-    /* Closed by default: summoned with a double-tap/double-click anywhere in
-       the scene, dismissed with a double-tap/double-click anywhere on it.
-       The frame is built from four flat, opaque blocks laid out on a grid —
-       a header bar, a corner cap, a category-colored spine, and the body —
-       instead of one translucent rounded card. No blur, no gradients, no
-       drop shadows: LCARS was flat design before "flat design" had a name. */
-    .lcars-hud {
+    /* --- LCARS Corner Panels --- */
+    /* Four independent, independently-collapsible panels, one per screen
+       corner, instead of one mega-panel with tabs inside it — Objects
+       (upper-left), Appearance (lower-left), Camera (upper-right), Files
+       (lower-right). Each is just a flat colored header (always visible —
+       that's the whole discovery mechanism now, no hidden summon gesture)
+       over a collapsible body. The swept, LCARS-signature corner rounds
+       toward screen center on every one; the two screen edges it touches
+       stay sharp. No blur, no gradients, no drop shadows: LCARS was flat
+       design before "flat design" had a name. */
+    .lcars-corner-panel {
       position: fixed;
-      top: 20px;
-      right: 20px;
-      width: 348px;
-      max-height: calc(100vh - 40px);
-      display: none;
-      grid-template-columns: 1fr 26px;
-      grid-template-rows: 46px 1fr;
-      grid-template-areas:
-        "bar  cap"
-        "body spine";
-      gap: 3px; /* the black "grout" seam between blocks */
-      background: #000;
-      color: #e8e8e8;
+      width: 296px;
+      max-height: calc(50vh - 30px);
+      display: flex;
+      flex-direction: column;
       font-family: 'Antonio', 'Arial Narrow', sans-serif;
+      color: #e8e8e8;
+      background: #000;
       z-index: 20;
       overflow: hidden;
-      /* Menu stays finger-friendly: taps register instantly and double-tap
+      /* Panels stay finger-friendly: taps register instantly and double-tap
          never triggers the browser's page-zoom gesture. */
       touch-action: manipulation;
     }
 
-    .lcars-hud.is-open { display: grid; }
+    .lcars-corner-panel--tl { top: 20px; left: 20px; border-radius: 2px 2px 20px 2px; }
+    .lcars-corner-panel--tr { top: 20px; right: 20px; border-radius: 2px 2px 2px 20px; }
+    /* Bottom-anchored panels grow upward from a handle pinned to the
+       screen edge — column-reverse keeps the (first-in-DOM) header
+       visually at the bottom, body opening above it. */
+    .lcars-corner-panel--bl { bottom: 20px; left: 20px; flex-direction: column-reverse; border-radius: 2px 20px 2px 2px; }
+    .lcars-corner-panel--br { bottom: 20px; right: 20px; flex-direction: column-reverse; border-radius: 20px 2px 2px 2px; }
 
-    /* The elbow: header bar + spine meeting a swept corner cap. Sharp on the
-       two outer corners that align with the screen edge, one big radius on
-       the inner corner facing the content — LCARS's signature joint. */
-    .lcars-hud__bar {
-      grid-area: bar;
+    .lcars-corner-header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      background: var(--accent, #ff9c00);
+    }
+
+    .lcars-corner-toggle {
+      flex: 1 1 auto;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 16px;
-      background: var(--lcars-butterscotch);
-      color: #000;
-    }
-
-    .lcars-hud__bar-label {
-      flex: 1 1 auto;
-      min-width: 0;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      font-size: 15px;
+      padding: 10px 14px;
+      appearance: none;
+      -webkit-appearance: none;
+      border: none;
+      background: none;
+      font-family: inherit;
+      font-size: 13px;
       font-weight: 700;
       letter-spacing: 2px;
       text-transform: uppercase;
+      color: #000;
+      cursor: pointer;
     }
 
-    .lcars-hud__bar-code {
-      flex-shrink: 0;
+    .lcars-corner-toggle:hover { filter: brightness(1.1); }
+
+    .lcars-corner-toggle::after {
+      content: '▸';
+      font-size: 11px;
+      margin-left: 8px;
+      transition: transform 0.15s;
+    }
+
+    .lcars-corner-toggle[aria-expanded="true"]::after { transform: rotate(90deg); }
+
+    .lcars-corner-body {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px;
+      min-height: 0;
+      overflow-y: auto;
+      background: #000;
+    }
+
+    .lcars-corner-panel.is-open .lcars-corner-body { display: flex; }
+
+    /* Objects panel only: a rebuildable sub-container nested inside the
+       body, so renderObjectsTab()'s innerHTML wipe never touches the
+       selection bar sitting alongside it in the body. */
+    .lcars-corner-content {
       display: flex;
       flex-direction: column;
-      align-items: flex-end;
-      gap: 2px;
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 1px;
-      opacity: 0.7;
+      gap: 10px;
+      min-width: 0;
     }
 
-    .lcars-hud__bar-code-row {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-
-    .lcars-hud__bar-stardate {
-      font-size: 9px;
-      font-variant-numeric: tabular-nums;
-    }
-
-    /* A quiet "system is alive" pulse — purely decorative */
-    .lcars-hud__pulse {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: #000;
-      animation: lcars-pulse 2.4s ease-in-out infinite;
-    }
-
-    @keyframes lcars-pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.25; }
-    }
-
-    /* Muted by default — this is the only way interface sound turns on */
+    /* Muted by default — this is the only way interface sound turns on.
+       Lives in the Camera header (always visible, open or closed) rather
+       than any one panel's body, so it's reachable without opening
+       anything first. */
     .lcars-hud__audio-toggle {
       flex-shrink: 0;
       display: flex;
@@ -144,8 +146,8 @@
       gap: 4px;
       appearance: none;
       -webkit-appearance: none;
-      margin: 0 8px;
-      padding: 3px 8px;
+      margin: 0 6px;
+      padding: 3px 7px;
       font-family: inherit;
       font-size: 8px;
       font-weight: 700;
@@ -173,72 +175,24 @@
       background: #000;
     }
 
-    .lcars-hud__cap {
-      grid-area: cap;
-      background: var(--lcars-butterscotch);
-      border-radius: 2px 2px 2px 999px;
-    }
-
-    /* Tracks the active tab's color — a live "you are here" wayfinding cue.
-       Also carries a few flavor readouts: purely cosmetic telemetry that
-       reads as "living system" without meaning anything or asking for
-       any attention — never focusable, never announced to assistive tech. */
-    .lcars-hud__spine {
-      grid-area: spine;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-evenly;
-      padding: 12px 0;
-      background: var(--spine-accent, var(--lcars-butterscotch));
-      transition: background 0.2s;
-    }
-
-    .lcars-hud__tick {
-      writing-mode: vertical-rl;
+    /* Stardate readout — also in the Camera header, purely decorative
+       "system is alive" flavor, never focusable or announced. */
+    .lcars-hud__bar-stardate {
+      flex-shrink: 0;
+      margin-right: 10px;
       font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      color: rgba(0, 0, 0, 0.5);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: rgba(0, 0, 0, 0.6);
       font-variant-numeric: tabular-nums;
     }
-
-    .lcars-hud__body {
-      grid-area: body;
-      min-height: 0; /* let this grid item shrink so its own child can scroll */
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      background: #000;
-    }
-
-    .lcars-hud-hint {
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      padding: 8px 16px;
-      appearance: none;
-      -webkit-appearance: none;
-      border: none;
-      font-family: 'Antonio', 'Arial Narrow', sans-serif;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #000;
-      background: var(--lcars-butterscotch);
-      border-radius: 2px 2px 2px 20px; /* echoes the cap's sweep, closed-state preview */
-      z-index: 20;
-      cursor: pointer;
-    }
-
-    .lcars-hud-hint[hidden] { display: none; }
 
     .lcars-hud__selection {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 16px;
+      padding: 8px 10px;
+      margin: -10px -10px 0;
       background: var(--lcars-alert);
       color: #000;
       font-size: 11px;
@@ -273,54 +227,6 @@
     }
 
     .lcars-hud__selection-clear:hover { background: rgba(0, 0, 0, 0.3); }
-
-    .lcars-menu {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 3px;
-      padding: 10px 10px 8px;
-      background: #000;
-    }
-
-    .lcars-tab {
-      flex: 1 1 auto;
-      min-width: 72px;
-      text-align: center;
-      padding: 7px 8px;
-      font-family: inherit;
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: var(--tab-accent, #999);
-      background: var(--tab-accent-dim, rgba(255, 255, 255, 0.06));
-      border: none;
-      border-radius: 3px;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .lcars-tab:hover { filter: brightness(1.3); }
-
-    .lcars-tab.is-active {
-      background: var(--tab-accent, #ff9c00);
-      color: #000;
-      font-weight: 700;
-    }
-
-    .lcars-tabpanels {
-      padding: 12px;
-      overflow-y: auto;
-      background: #000;
-    }
-
-    .lcars-tabpanel {
-      display: none;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .lcars-tabpanel.is-active { display: flex; }
 
     .lcars-panel {
       background: #0d0d0d;
@@ -700,8 +606,7 @@
     /* One consistent themed focus ring for every keyboard-reachable control,
        instead of leaving it to inconsistent browser defaults — and restoring
        it where .tool-slider/.tool-toggle removed the native outline entirely. */
-    .lcars-hud-hint:focus-visible,
-    .lcars-tab:focus-visible,
+    .lcars-corner-toggle:focus-visible,
     .tool-slider:focus-visible,
     .tool-toggle:focus-visible,
     .tool-select__opt:focus-visible,
@@ -727,40 +632,9 @@
 <body>
   <div id="canvas-container"></div>
 
-  <button type="button" class="lcars-hud-hint" id="lcars-hud-hint" aria-label="Open control menu">HUD-01 · double-tap to open</button>
-
-  <div class="lcars-hud" id="lcars-hud">
-    <div class="lcars-hud__bar">
-      <span class="lcars-hud__bar-label">Controls</span>
-      <button type="button" class="lcars-hud__audio-toggle" id="lcars-audio-toggle" aria-pressed="false" aria-label="Toggle interface sound">
-        <span class="lcars-hud__audio-dot" aria-hidden="true"></span>
-        SND
-      </button>
-      <span class="lcars-hud__bar-code" aria-hidden="true">
-        <span class="lcars-hud__bar-code-row">
-          <span class="lcars-hud__pulse"></span>
-          HUD-01
-        </span>
-        <span class="lcars-hud__bar-stardate" id="lcars-stardate">SD 47000.00</span>
-      </span>
-    </div>
-    <div class="lcars-hud__cap"></div>
-    <div class="lcars-hud__body">
-      <div class="lcars-hud__selection" id="lcars-selection" hidden>
-        <span class="lcars-hud__selection-label">SEL</span>
-        <span class="lcars-hud__selection-value" id="lcars-selection-value">—</span>
-        <button class="lcars-hud__selection-clear" id="lcars-selection-clear" type="button" aria-label="Clear selection">✕</button>
-      </div>
-      <nav class="lcars-menu" id="lcars-menu"></nav>
-      <div class="lcars-tabpanels" id="lcars-tabpanels"></div>
-    </div>
-    <div class="lcars-hud__spine" aria-hidden="true">
-      <span class="lcars-hud__tick"></span>
-      <span class="lcars-hud__tick"></span>
-      <span class="lcars-hud__tick"></span>
-      <span class="lcars-hud__tick"></span>
-    </div>
-  </div>
+  <!-- The four corner control panels (Objects/Appearance/Camera/Files) are
+       built entirely in JS — see "LCARS Corner Panels" further down —
+       matching how their inner content panels were already constructed. -->
 
   <script>
     // --- Application State & Parameters ---
@@ -780,8 +654,11 @@
       // How every object's surface (except a Singularity, always unlit) is
       // shaded — see buildObjectMaterial(). 'Shaded' = normal PBR gradient
       // response, 'Posterized' = 3-band cel/toon shading, 'Flat Light' =
-      // no shading at all, flat color regardless of light angle.
-      lightingMode: 'Shaded',
+      // no shading at all, flat color regardless of light angle. Defaults
+      // to 'Flat Light' — LCARS was flat design before "flat design" had
+      // a name, and that same solid-color, no-gradient language extends
+      // naturally from the HUD chrome to the construct itself.
+      lightingMode: 'Flat Light',
       // Every stellar object: { id, name, type, parentId, mass, size,
       // shape, color, orbit: { distance, speedRatio, angleDeg },
       // pathColor, pathVisible }. parentId: null means "fixed at the
@@ -1650,9 +1527,22 @@
     let selectionHelper = null;
     let selectedEntity = null;
 
-    const selectionBar = document.getElementById('lcars-selection');
-    const selectionValueEl = document.getElementById('lcars-selection-value');
-    const selectionClearBtn = document.getElementById('lcars-selection-clear');
+    // Built detached here (rather than looked up via getElementById from
+    // static HTML) and appended into the Objects panel's body once that
+    // panel exists further down — same DOM nodes either way, just built
+    // where the code that drives them lives instead of a separate markup
+    // block, matching how every other HUD control is already constructed.
+    const selectionBar = el('div', 'lcars-hud__selection');
+    selectionBar.hidden = true;
+    selectionBar.appendChild(el('span', 'lcars-hud__selection-label', 'SEL'));
+    const selectionValueEl = el('span', 'lcars-hud__selection-value', '—');
+    selectionBar.appendChild(selectionValueEl);
+    const selectionClearBtn = document.createElement('button');
+    selectionClearBtn.type = 'button';
+    selectionClearBtn.className = 'lcars-hud__selection-clear';
+    selectionClearBtn.setAttribute('aria-label', 'Clear selection');
+    selectionClearBtn.textContent = '✕';
+    selectionBar.appendChild(selectionClearBtn);
 
     function selectableTargets() {
       const targets = [];
@@ -1686,11 +1576,12 @@
         entity.root.getWorldPosition(targetPos);
         controls.target.copy(targetPos);
       }
-      // Selecting in the 3D scene also focuses that object's controls —
-      // useful even when the Objects tab isn't the one currently open.
+      // Selecting in the 3D scene also focuses that object's controls and
+      // opens the Objects panel, even if it was collapsed at the time.
       if (entity.objectId) {
         focusedObjectId = entity.objectId;
         if (typeof renderObjectsTab === 'function') renderObjectsTab();
+        if (typeof objectsPanel !== 'undefined' && objectsPanel) objectsPanel.setOpen(true);
       }
     }
 
@@ -1739,15 +1630,13 @@
       clearSelection();
     });
 
-    // --- Living-system telemetry (purely decorative, aria-hidden) ---
-    // A stardate ticker and a few flavor readouts in the spine — they don't
-    // mean anything and never take focus or a pointer event; they exist so
-    // the HUD reads as a system that's alive, not a static prop. Only runs
-    // while the HUD is actually open, so there's nothing to update (or for
-    // a screen reader to skip past) while it's summoned away.
-    const stardateEl = document.getElementById('lcars-stardate');
-    const spineTicks = document.querySelectorAll('.lcars-hud__tick');
-    let telemetryTimer = null;
+    // --- Living-system telemetry (purely decorative except the orbital
+    // readout) --- A stardate ticker in the Camera header — doesn't mean
+    // anything, exists so the HUD reads as a system that's alive. Runs
+    // continuously now that the corner panels' headers (and thus this
+    // readout) are always on screen, open or collapsed.
+    const stardateEl = el('span', 'lcars-hud__bar-stardate');
+    stardateEl.setAttribute('aria-hidden', 'true');
 
     function computeStardate() {
       const now = new Date();
@@ -1759,29 +1648,13 @@
       return 'SD ' + whole + '.' + frac;
     }
 
-    function randomTick() {
-      return Math.floor(Math.random() * 0xfff).toString(16).toUpperCase().padStart(3, '0');
-    }
-
-    function startTelemetry() {
-      if (telemetryTimer) return;
-      if (stardateEl) stardateEl.textContent = computeStardate();
-      spineTicks.forEach(t => { t.textContent = randomTick(); });
-      telemetryTimer = setInterval(() => {
-        if (stardateEl) stardateEl.textContent = computeStardate();
-        const i = Math.floor(Math.random() * spineTicks.length);
-        if (spineTicks[i]) spineTicks[i].textContent = randomTick();
-        updateOrbitalTelemetryReadout();
-      }, 1000);
-    }
-
-    // Keeps the focused object's Orbital Telemetry panel (if it's actually
-    // on screen right now) reading live current values — piggybacked on
-    // this existing 1s ticker instead of a dedicated timer or a per-frame
-    // DOM write. A no-op whenever there's nothing relevant to update, so
-    // it's always safe to call unconditionally.
+    // Keeps the focused object's Orbital Telemetry panel (if the Objects
+    // panel is actually open right now) reading live current values —
+    // piggybacked on this existing 1s ticker instead of a dedicated timer
+    // or a per-frame DOM write. A no-op whenever there's nothing relevant
+    // to update, so it's always safe to call unconditionally.
     function updateOrbitalTelemetryReadout() {
-      if (activeTabId !== 'objects') return;
+      if (!objectsPanel || !objectsPanel.isOpen()) return;
       const obj = params.objects.find(o => o.id === focusedObjectId);
       if (!obj || !obj.parentId) return;
       const rt = objectRuntime.get(obj.id);
@@ -1801,42 +1674,13 @@
       setField('eccentricity', elements.e.toFixed(3));
     }
 
-    function stopTelemetry() {
-      clearInterval(telemetryTimer);
-      telemetryTimer = null;
-    }
+    stardateEl.textContent = computeStardate();
+    setInterval(() => {
+      stardateEl.textContent = computeStardate();
+      updateOrbitalTelemetryReadout();
+    }, 1000);
 
-    // --- HUD Open/Close (double-tap/double-click to summon or dismiss) ---
-    const hudEl = document.getElementById('lcars-hud');
-    const hudHintEl = document.getElementById('lcars-hud-hint');
-    let menuOpen = false;
-
-    function openMenu() {
-      if (menuOpen) return;
-      menuOpen = true;
-      hudEl.classList.add('is-open');
-      hudHintEl.hidden = true;
-      startTelemetry();
-      playOpen();
-      const active = TABS.find(t => t.id === activeTabId);
-      if (active) active.btn.focus();
-    }
-
-    function closeMenu() {
-      if (!menuOpen) return;
-      menuOpen = false;
-      hudEl.classList.remove('is-open');
-      hudHintEl.hidden = false;
-      stopTelemetry();
-      playDismiss();
-      hudHintEl.focus();
-    }
-
-    hudHintEl.addEventListener('click', openMenu);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && menuOpen) closeMenu();
-    });
-
+    // --- Double-tap/double-click to select an object in the 3D scene ---
     const DOUBLE_TAP_MS = 350;
     const DOUBLE_TAP_PX = 28;
 
@@ -1861,15 +1705,7 @@
     }
 
     watchDoubleActivate(renderer.domElement, (e) => {
-      if (!menuOpen) {
-        openMenu();
-        return;
-      }
       handleActivateAt(e.clientX, e.clientY);
-    });
-
-    watchDoubleActivate(hudEl, () => {
-      if (menuOpen) closeMenu();
     });
 
     function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
@@ -1914,7 +1750,15 @@
     function playDismiss() { playBlip(990, 660, 0.09, 0.06); }
     function playOpen() { playBlip(520, 1040, 0.12, 0.06); }
 
-    const audioToggleBtn = document.getElementById('lcars-audio-toggle');
+    const audioToggleBtn = document.createElement('button');
+    audioToggleBtn.type = 'button';
+    audioToggleBtn.className = 'lcars-hud__audio-toggle';
+    audioToggleBtn.setAttribute('aria-pressed', 'false');
+    audioToggleBtn.setAttribute('aria-label', 'Toggle interface sound');
+    const audioDot = document.createElement('span');
+    audioDot.className = 'lcars-hud__audio-dot';
+    audioToggleBtn.appendChild(audioDot);
+    audioToggleBtn.appendChild(document.createTextNode('SND'));
     audioToggleBtn.addEventListener('click', () => {
       audioEnabled = !audioEnabled;
       audioToggleBtn.setAttribute('aria-pressed', audioEnabled ? 'true' : 'false');
@@ -2156,76 +2000,80 @@
       container.appendChild(panel);
     }
 
-    // --- LCARS HUD: menu + tabs scaffold ---
-    const hudMenu = document.getElementById('lcars-menu');
-    const hudPanels = document.getElementById('lcars-tabpanels');
-    hudMenu.setAttribute('role', 'tablist');
-    hudMenu.setAttribute('aria-label', 'Control categories');
+    // --- LCARS HUD: four independent corner panels ---
+    // Mike Okuda's redesign: rather than one mega-panel with internal tabs,
+    // each control category is its own small panel pinned to a screen
+    // corner, opened/closed independently of the others. Objects (what to
+    // build) and Appearance (how it looks) share the left edge; Camera
+    // (how you're looking at it) and Files (save/load/export) share the
+    // right — grouped by "who reaches for this together," not by leftover
+    // tab order.
+    const ALL_CORNER_PANELS = [];
 
-    const TABS = [
-      { id: 'objects', label: 'Objects', accent: LCARS_PALETTE.periwinkle },
-      { id: 'camera', label: 'Camera', accent: LCARS_PALETTE.ice },
-      { id: 'memory', label: 'Memory', accent: LCARS_PALETTE.plum }
-    ];
+    function createCornerPanel(config) {
+      // config: { id, corner: 'tl'|'tr'|'bl'|'br', label, accent }
+      const panel = el('div', 'lcars-corner-panel lcars-corner-panel--' + config.corner);
+      panel.style.setProperty('--accent', config.accent);
 
-    const tabPanelEls = {};
-    TABS.forEach((tab, i) => {
-      const btn = el('button', 'lcars-tab' + (i === 0 ? ' is-active' : ''), tab.label);
-      btn.type = 'button';
-      btn.id = 'lcars-tab-' + tab.id;
-      btn.setAttribute('role', 'tab');
-      btn.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
-      btn.setAttribute('aria-controls', 'lcars-tabpanel-' + tab.id);
-      btn.tabIndex = i === 0 ? 0 : -1;
-      btn.style.setProperty('--tab-accent', tab.accent);
-      btn.style.setProperty('--tab-accent-dim', dimHex(tab.accent, 0.85));
-      btn.addEventListener('click', () => activateTab(tab.id));
-      hudMenu.appendChild(btn);
-      tab.btn = btn;
+      const headerRow = el('div', 'lcars-corner-header');
+      const toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'lcars-corner-toggle';
+      const bodyId = 'lcars-corner-body-' + config.id;
+      toggleBtn.setAttribute('aria-expanded', 'false');
+      toggleBtn.setAttribute('aria-controls', bodyId);
+      toggleBtn.textContent = config.label;
+      headerRow.appendChild(toggleBtn);
 
-      const panelEl = el('div', 'lcars-tabpanel' + (i === 0 ? ' is-active' : ''));
-      panelEl.id = 'lcars-tabpanel-' + tab.id;
-      panelEl.setAttribute('role', 'tabpanel');
-      panelEl.setAttribute('aria-labelledby', btn.id);
-      panelEl.style.setProperty('--accent', tab.accent);
-      hudPanels.appendChild(panelEl);
-      tabPanelEls[tab.id] = panelEl;
-    });
+      const body = el('div', 'lcars-corner-body');
+      body.id = bodyId;
 
-    let activeTabId = TABS[0].id;
+      panel.appendChild(headerRow);
+      panel.appendChild(body);
+      document.body.appendChild(panel);
 
-    function activateTab(id) {
-      activeTabId = id;
-      const activeTab = TABS.find(t => t.id === id);
-      if (activeTab) hudEl.style.setProperty('--spine-accent', activeTab.accent);
-      TABS.forEach(tab => {
-        const active = tab.id === id;
-        tab.btn.classList.toggle('is-active', active);
-        tab.btn.setAttribute('aria-selected', active ? 'true' : 'false');
-        tab.btn.tabIndex = active ? 0 : -1;
-        tabPanelEls[tab.id].classList.toggle('is-active', active);
-      });
-      playTick(); // no-ops silently at the initial bootstrap call — audio starts off
+      let open = false;
+      function setOpen(v) {
+        if (open === v) return;
+        open = v;
+        panel.classList.toggle('is-open', v);
+        toggleBtn.setAttribute('aria-expanded', v ? 'true' : 'false');
+        if (v) playOpen(); else playDismiss(); // no-ops silently while audio is off
+      }
+      toggleBtn.addEventListener('click', () => setOpen(!open));
+
+      const instance = { panel, headerRow, toggleBtn, body, setOpen, isOpen: () => open };
+      ALL_CORNER_PANELS.push(instance);
+      return instance;
     }
 
-    hudMenu.addEventListener('keydown', (e) => {
-      const currentIndex = TABS.findIndex(t => t.id === activeTabId);
-      let nextIndex = null;
-      if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % TABS.length;
-      else if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + TABS.length) % TABS.length;
-      else if (e.key === 'Home') nextIndex = 0;
-      else if (e.key === 'End') nextIndex = TABS.length - 1;
-      if (nextIndex === null) return;
-      e.preventDefault();
-      activateTab(TABS[nextIndex].id);
-      TABS[nextIndex].btn.focus();
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      ALL_CORNER_PANELS.forEach(p => { if (p.isOpen()) p.setOpen(false); });
     });
 
-    activateTab(TABS[0].id); // seed the spine color to match the default active tab
+    const objectsPanel = createCornerPanel({ id: 'objects', corner: 'tl', label: 'Objects', accent: LCARS_PALETTE.periwinkle });
+    const appearancePanel = createCornerPanel({ id: 'appearance', corner: 'bl', label: 'Appearance', accent: LCARS_PALETTE.gold });
+    const cameraPanel = createCornerPanel({ id: 'camera', corner: 'tr', label: 'Camera', accent: LCARS_PALETTE.ice });
+    const memoryPanel = createCornerPanel({ id: 'memory', corner: 'br', label: 'Files', accent: LCARS_PALETTE.plum });
 
-    const objectsTab = tabPanelEls.objects;
-    const cameraTab = tabPanelEls.camera;
-    const memoryTab = tabPanelEls.memory;
+    // Camera's header is always on screen (open or collapsed), so the
+    // stardate readout and the sound toggle live there rather than buried
+    // in any one panel's collapsible body.
+    cameraPanel.headerRow.appendChild(stardateEl);
+    cameraPanel.headerRow.appendChild(audioToggleBtn);
+
+    // The selection bar sits directly in the Objects panel body, above a
+    // nested sub-container that renderObjectsTab() tears down and rebuilds
+    // on every structural change — keeping the bar itself untouched by
+    // those rebuilds.
+    objectsPanel.body.appendChild(selectionBar);
+    const objectsTab = el('div', 'lcars-corner-content');
+    objectsPanel.body.appendChild(objectsTab);
+
+    const appearanceTab = appearancePanel.body;
+    const cameraTab = cameraPanel.body;
+    const memoryTab = memoryPanel.body;
 
     // 1. Objects — the dynamic hierarchy: a chip row (one per object, "+"
     // to add another) and a detail panel for whichever object is focused.
@@ -2444,8 +2292,15 @@
     createSliderPanel(cameraTab, { code: 'CAM-04', title: 'Follow Height', unit: 'u', min: 0.5, max: 30, step: 0.5, value: params.camera.height, format: v => v.toFixed(1), onInput: v => {
       params.camera.height = v;
     }});
-    createSelectPanel(cameraTab, {
-      code: 'CAM-05',
+
+    // 3. Appearance — how the construct is rendered: shading style, plus
+    // "master" orbit-path controls that apply to every object at once
+    // instead of visiting each one individually on the Objects panel. Not
+    // a persistent override layer — after applying, each object's own
+    // Path Color/Light Orbit Path controls remain the live source of
+    // truth and can still be adjusted individually.
+    createSelectPanel(appearanceTab, {
+      code: 'APR-01',
       title: 'Lighting Mode',
       options: ['Shaded', 'Posterized', 'Flat Light'],
       value: params.lightingMode,
@@ -2454,12 +2309,7 @@
         applyLightingModeToAllObjects();
       }
     });
-    // "Master" controls: apply to every object's orbit-path at once,
-    // instead of visiting each one individually on the Objects tab. Not a
-    // persistent override layer — after applying, each object's own Path
-    // Color/Light Orbit Path controls remain the live source of truth and
-    // can still be adjusted individually.
-    createColorPanel(cameraTab, { code: 'CAM-06', title: 'Set All Path Colors', value: '#33ffff', onChange: c => {
+    createColorPanel(appearanceTab, { code: 'APR-02', title: 'Set All Path Colors', value: '#33ffff', onChange: c => {
       params.objects.forEach(o => {
         if (!o.parentId) return;
         o.pathColor = c;
@@ -2467,8 +2317,8 @@
       });
       renderObjectsTab(); // refresh the focused object's own Path Color panel if it changed
     }});
-    createTogglePanel(cameraTab, {
-      code: 'CAM-07',
+    createTogglePanel(appearanceTab, {
+      code: 'APR-03',
       title: 'Light All Orbit Paths',
       value: params.objects.length > 0 && params.objects.filter(o => o.parentId).every(o => o.pathVisible),
       onLabel: 'ALL LIT',
@@ -2483,7 +2333,7 @@
       }
     });
 
-    // 3. Memory — "Computer, save current program." Local named saves, plus
+    // 4. Memory — "Computer, save current program." Local named saves, plus
     // a portable export/import code for taking a program to another browser.
     function createSaveProgramPanel(container, onSave) {
       const panel = el('div', 'lcars-panel');
